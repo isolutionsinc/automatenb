@@ -1,12 +1,28 @@
-from fastapi import FastAPI, HTTPException
-import nbformat
+from fastapi import FastAPI, HTTPException, Body
+from fastapi.middleware.cors import CORSMiddleware
+from nbformat import from_dict, write, read
 from nbconvert.preprocessors import ExecutePreprocessor
 
+from typing import Dict
+import json
+
 app = FastAPI()
+origins = [
+    "https://codebox.isolutionsai.com",
+    # add more origins if needed
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def execute_notebook(notebook_path):
     with open(notebook_path) as f:
-        nb = nbformat.read(f, as_version=4)
+        nb = read(f, as_version=4)
 
     ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
 
@@ -24,14 +40,36 @@ def get_output_from_cell(nb, cell_index):
     else:
         return None
 
+
+
 @app.post("/execute-notebook/")
-async def execute(notebook_path: str, cell_index: int):
+#async def execute(notebook_path: str, cell_index: int):
+async def execute(notebook_path: str = Body(...), cell_index: int = Body(...)):
     try:
         nb = execute_notebook(notebook_path)
         output = get_output_from_cell(nb, cell_index)
         return {"output": output}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/write-notebook/")
+async def write_notebook(notebook_data: Dict):
+    try:
+        notebook_path = notebook_data.get('path')
+        notebook_content = notebook_data.get('content')
+
+        # Convert the dictionary to a notebook object
+        nb = from_dict(notebook_content)
+
+        # Write the notebook node to a file
+        with open(notebook_path, 'w') as f:
+            write(nb, f)
+
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 if __name__ == "__main__":
     import uvicorn
