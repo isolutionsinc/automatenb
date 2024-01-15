@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Response
 from fastapi.middleware.cors import CORSMiddleware
 from nbformat import from_dict, write, read
 from nbconvert.preprocessors import ExecutePreprocessor
@@ -54,6 +54,23 @@ async def list_files():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/read-notebook/{filename}", response_class=Response)
+async def read_notebook(filename: str):
+    notebook_path = f"/home/ubuntu/automatenb/environment/{filename}"
+    try:
+        with open(notebook_path) as f:
+            nb = read(f, as_version=4)
+
+        # Convert the notebook to a dictionary
+        nb_dict = dict(nb)
+
+        # Convert the dictionary to a JSON string
+        nb_json = json.dumps(nb_dict)
+
+        # Return the JSON string as a stream
+        return Response(content=nb_json, media_type="application/json")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/execute-notebook/")
 #async def execute(notebook_path: str, cell_index: int):
