@@ -46,6 +46,13 @@ def get_output_from_cell(nb, cell_index):
     else:
         return None
 
+@app.post("/list-files/")
+async def list_files():
+    try:
+        files = os.listdir("/home/ubuntu/automatenb/environment/")
+        return {"status": "success", "files": files}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/execute-notebook/")
