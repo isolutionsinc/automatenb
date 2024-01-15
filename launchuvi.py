@@ -5,6 +5,7 @@ from nbconvert.preprocessors import ExecutePreprocessor
 
 from typing import Dict
 import json
+import os
 
 app = FastAPI()
 origins = [
@@ -19,6 +20,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+def check_if_file_exists(file_path: str):
+    if os.path.isfile(file_path):
+        return True
+    else:
+        return False
 
 def execute_notebook(notebook_path):
     with open(notebook_path) as f:
@@ -54,6 +60,9 @@ async def execute(notebook_path: str = Body(...), cell_index: int = Body(...)):
 
 @app.post("/write-notebook/")
 async def write_notebook(notebook_data: Dict):
+    notebook_path = notebook_data.get('path')
+    if check_if_file_exists(notebook_path):
+        return {"status": "error", "message": "File already exists"}
     try:
         notebook_path = notebook_data.get('path')
         notebook_content = notebook_data.get('content')
@@ -69,7 +78,19 @@ async def write_notebook(notebook_data: Dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+@app.post("/delete-file/")
+async def delete_file(filename: str = Body(...)):
+    filename= json.loads(filename)['filename']
+    file_path = f"/home/ubuntu/automatenb/environment/{filename}"
+    print(file_path)
+    if os.path.isfile(file_path):
+        try:
+            os.remove(file_path)
+            return {"status": "success", "message": f"File {filename} has been deleted."}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    else:
+        return {"status": "error", "message": "File does not exist"}
 
 if __name__ == "__main__":
     import uvicorn
