@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Body, Response
+from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from nbformat import from_dict, write, read
 from nbconvert.preprocessors import ExecutePreprocessor
@@ -6,6 +6,7 @@ from nbconvert.preprocessors import ExecutePreprocessor
 from typing import Dict
 import json
 import os
+import shutil
 
 app = FastAPI()
 origins = [
@@ -104,6 +105,9 @@ async def write_notebook(notebook_data: Dict):
 
 @app.post("/notebook-environment/")
 async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)):
+    # Prepend /environment/ to the folder_name
+    #folder_name = os.path.join("/environment/", folder_name)
+
     # Create a new directory with the folder_name as its name
     os.makedirs(folder_name, exist_ok=True)
 
@@ -132,7 +136,8 @@ async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)
 @app.post("/delete-file/")
 async def delete_file(filename: str = Body(...)):
     filename= json.loads(filename)['filename']
-    file_path = f"/home/ubuntu/automatenb/environment/{filename}"
+    #file_path = f"/home/ubuntu/automatenb/environment/{filename}"
+    file_path = f"/home/ubuntu/automatenb/{filename}"
     print(file_path)
     if os.path.isfile(file_path):
         try:
@@ -142,6 +147,29 @@ async def delete_file(filename: str = Body(...)):
             raise HTTPException(status_code=500, detail=str(e))
     else:
         return {"status": "error", "message": "File does not exist"}
+
+@app.post("/upload-file/{folder_name}")
+async def upload_file(folder_name: str, file: UploadFile = File(...)):
+    if not os.path.isdir(folder_name):
+        raise HTTPException(status_code=400, detail="Folder does not exist")
+
+    with open(f"{folder_name}/{file.filename}", "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    return {"filename": file.filename}
+
+@app.post("/delete-folder/{folder_name}")
+async def delete_folder(folder_name: str):
+    #folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
+    folder_path = f"/home/ubuntu/automatenb/{folder_name}"
+    if os.path.isdir(folder_path):
+        try:
+            shutil.rmtree(folder_path)
+            return {"status": "success", "message": f"Folder {folder_name} has been deleted."}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    else:
+        return {"status": "error", "message": "Folder does not exist"}
 
 if __name__ == "__main__":
     import uvicorn
