@@ -102,6 +102,33 @@ async def write_notebook(notebook_data: Dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/notebook-environment/")
+async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)):
+    # Create a new directory with the folder_name as its name
+    os.makedirs(folder_name, exist_ok=True)
+
+    # Get the notebook path and content from the request data
+    notebook_path = notebook_data.get('path')
+    notebook_content = notebook_data.get('content')
+
+    # Append the new folder name to the notebook path
+    notebook_path = os.path.join(folder_name, notebook_path)
+
+    if check_if_file_exists(notebook_path):
+        return {"status": "error", "message": "File already exists"}
+
+    try:
+        # Convert the dictionary to a notebook object
+        nb = from_dict(notebook_content)
+
+        # Write the notebook node to a file
+        with open(notebook_path, 'w') as f:
+            write(nb, f)
+
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/delete-file/")
 async def delete_file(filename: str = Body(...)):
     filename= json.loads(filename)['filename']
