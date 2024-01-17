@@ -7,8 +7,25 @@ from nbconvert.preprocessors import ExecutePreprocessor
 
 from typing import Dict
 import json
+from dotenv import load_dotenv
 import os
 import shutil
+
+load_dotenv()
+
+from supabase import create_client, Client
+from starlette.responses import StreamingResponse
+import aiohttp
+
+#url: str = os.environ.get("SUPABASE_URL")
+#key: str = os.environ.get("SUPABASE_KEY")
+
+url = os.getenv('SUPABASE_URL')
+key = os.getenv('SUPABASE_KEY')
+supabase: Client = create_client(url, key)
+
+print(url)
+print(key)
 
 app = FastAPI()
 origins = [
@@ -171,6 +188,28 @@ async def upload_file(folder_name: str, file: UploadFile = File(...)):
 
     return {"filename": file.filename}
 
+
+@app.post("/upload-supabase/{folder_name}/{bucket_name}/{file_name}")
+async def upload_file(folder_name: str, bucket_name: str, file_name: str):
+    folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
+    if not os.path.isdir(folder_path):
+        raise HTTPException(status_code=400, detail="Folder does not exist")
+    # Define the path on Supabase storage
+    #path_on_supabase = f"{folder_name}/{file_name}"
+    path_on_supabase = file_name
+
+    file_path = f"{folder_path}/{file_name}"
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=400, detail="File does not exist")
+
+    # Open the file in binary mode and upload it to Supabase
+    with open(file_path, 'rb') as f:
+        supabase.storage.from_(bucket_name).upload(file=f, path=path_on_supabase)
+
+    file_url = supabase.storage.from_(bucket_name).get_public_url(path_on_supabase)
+
+    return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}", "file_url": file_url}
+
 @app.post("/delete-folder/{folder_name}")
 async def delete_folder(folder_name: str):
     folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
@@ -245,6 +284,20 @@ async def download_file(folder_name: str, file_name: str):
     else:
         raise HTTPException(status_code=404, detail="File not found")
 
+@app.get("/download-supabase/{bucket_name}/{folder_name}/{file_name}")
+async def download_file(bucket_name: str, folder_name: str, file_name: str):
+    # Construct the path on Supabase storage
+    path_on_supabase = f"{folder_name}/{file_name}"
+
+    # Download the file from Supabase
+    url = supabase.storage.from_(bucket_name).get_public_url(path_on_supabase)
+
+    # Create an aiohttp client session
+    async with aiohttp.ClientSession() as session:
+        # Make a GET request to the file URL
+        async with session.get(url) as resp:
+            # Create a streaming response with the file content
+            return StreamingResponse(resp.content, media_type='application/octet-stream', headers={'Content-Disposition': f'attachment; filename={file_name}'})
 
 
 if __name__ == "__main__":
