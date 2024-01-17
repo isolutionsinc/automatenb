@@ -16,6 +16,7 @@ load_dotenv()
 from supabase import create_client, Client
 from starlette.responses import StreamingResponse
 import aiohttp
+import aiofiles
 
 #url: str = os.environ.get("SUPABASE_URL")
 #key: str = os.environ.get("SUPABASE_KEY")
@@ -283,6 +284,7 @@ async def download_file(folder_name: str, file_name: str):
         return FileResponse(file_path, filename=file_name)
     else:
         raise HTTPException(status_code=404, detail="File not found")
+import aiofiles
 
 @app.get("/download-supabase/{bucket_name}/{folder_name}/{file_name}")
 async def download_file(bucket_name: str, folder_name: str, file_name: str):
@@ -296,9 +298,17 @@ async def download_file(bucket_name: str, folder_name: str, file_name: str):
     async with aiohttp.ClientSession() as session:
         # Make a GET request to the file URL
         async with session.get(url) as resp:
-            # Create a streaming response with the file content
-            return StreamingResponse(resp.content, media_type='application/octet-stream', headers={'Content-Disposition': f'attachment; filename={file_name}'})
+            # Read the file content
+            file_content = await resp.read()
 
+    # Define the path where the file will be saved
+    save_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
+
+    # Write the file content to a file
+    async with aiofiles.open(save_path, 'wb') as f:
+        await f.write(file_content)
+
+    return {"status": "success", "message": f"File {file_name} has been downloaded and saved to {folder_name}"}
 
 if __name__ == "__main__":
     import uvicorn
