@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from nbformat import from_dict, write, read
+from nbformat.v4 import new_code_cell, new_markdown_cell
 from nbconvert.preprocessors import ExecutePreprocessor
 
 from typing import Dict
@@ -47,17 +49,18 @@ def get_output_from_cell(nb, cell_index):
     else:
         return None
 
-@app.post("/list-files/")
-async def list_files():
+@app.post("/list-files/{folder_name}")
+async def list_files(folder_name: str):
     try:
-        files = os.listdir("/home/ubuntu/automatenb/environment/")
+        folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
+        files = os.listdir(folder_path)
         return {"status": "success", "files": files}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/read-notebook/{filename}", response_class=Response)
-async def read_notebook(filename: str):
-    notebook_path = f"/home/ubuntu/automatenb/environment/{filename}"
+@app.get("/read-notebook/{folder_name}/{filename}", response_class=Response)
+async def read_notebook(folder_name: str, filename: str):
+    notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{filename}"
     try:
         with open(notebook_path) as f:
             nb = read(f, as_version=4)
@@ -73,23 +76,28 @@ async def read_notebook(filename: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/execute-notebook/")
+@app.post("/execute-notebook/{folder_name}")
 #async def execute(notebook_path: str, cell_index: int):
-async def execute(notebook_path: str = Body(...), cell_index: int = Body(...)):
+async def execute(folder_name: str, notebook_path: str = Body(...), cell_index: int = Body(...)):
     try:
+        notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{notebook_path}"
         nb = execute_notebook(notebook_path)
         output = get_output_from_cell(nb, cell_index)
         return {"output": output}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/write-notebook/")
-async def write_notebook(notebook_data: Dict):
-    notebook_path = notebook_data.get('path')
+@app.post("/write-notebook/{folder_name}")
+async def write_notebook(notebook_data: Dict, folder_name: str):
+    #notebook_path = notebook_data.get('path')
+    #notebook_path = os.path.join(folder_name, notebook_data.get('path'))
+    notebook_name = notebook_data.get('path')
+    notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{notebook_name}"
+
     if check_if_file_exists(notebook_path):
         return {"status": "error", "message": "File already exists"}
     try:
-        notebook_path = notebook_data.get('path')
+        #notebook_path = notebook_data.get('path')
         notebook_content = notebook_data.get('content')
 
         # Convert the dictionary to a notebook object
@@ -106,8 +114,9 @@ async def write_notebook(notebook_data: Dict):
 @app.post("/notebook-environment/")
 async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)):
     # Prepend /environment/ to the folder_name
-    #folder_name = os.path.join("/environment/", folder_name)
-
+    #folder_name = os.path.join(os.getcwd(), "/environment/", folder_name)
+    folder_name = f"/home/ubuntu/automatenb/environment/{folder_name}"
+    print(folder_name)
     # Create a new directory with the folder_name as its name
     os.makedirs(folder_name, exist_ok=True)
 
@@ -115,8 +124,11 @@ async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)
     notebook_path = notebook_data.get('path')
     notebook_content = notebook_data.get('content')
 
+    # Extract the base name from the notebook path
+    notebook_basename = os.path.basename(notebook_path)
+
     # Append the new folder name to the notebook path
-    notebook_path = os.path.join(folder_name, notebook_path)
+    notebook_path = os.path.join(folder_name, notebook_basename)
 
     if check_if_file_exists(notebook_path):
         return {"status": "error", "message": "File already exists"}
@@ -133,11 +145,11 @@ async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/delete-file/")
-async def delete_file(filename: str = Body(...)):
+@app.post("/delete-file/{folder_name}")
+async def delete_file(folder_name: str, filename: str = Body(...)):
     filename= json.loads(filename)['filename']
-    #file_path = f"/home/ubuntu/automatenb/environment/{filename}"
-    file_path = f"/home/ubuntu/automatenb/{filename}"
+    file_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{filename}"
+    #file_path = f"/home/ubuntu/automatenb/{filename}"
     print(file_path)
     if os.path.isfile(file_path):
         try:
@@ -150,6 +162,7 @@ async def delete_file(filename: str = Body(...)):
 
 @app.post("/upload-file/{folder_name}")
 async def upload_file(folder_name: str, file: UploadFile = File(...)):
+    folder_name = f"/home/ubuntu/automatenb/environment/{folder_name}"
     if not os.path.isdir(folder_name):
         raise HTTPException(status_code=400, detail="Folder does not exist")
 
@@ -160,8 +173,8 @@ async def upload_file(folder_name: str, file: UploadFile = File(...)):
 
 @app.post("/delete-folder/{folder_name}")
 async def delete_folder(folder_name: str):
-    #folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
-    folder_path = f"/home/ubuntu/automatenb/{folder_name}"
+    folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
+    #folder_path = f"/home/ubuntu/automatenb/{folder_name}"
     if os.path.isdir(folder_path):
         try:
             shutil.rmtree(folder_path)
@@ -170,6 +183,43 @@ async def delete_folder(folder_name: str):
             raise HTTPException(status_code=500, detail=str(e))
     else:
         return {"status": "error", "message": "Folder does not exist"}
+
+from nbformat.v4 import new_code_cell, new_markdown_cell
+
+@app.post("/add-cell/{folder_name}")
+async def add_cell(folder_name: str, notebook_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body(...)):
+    try:
+        notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{notebook_name}"
+        with open(notebook_path) as f:
+            nb = read(f, as_version=4)
+
+        if cell_type == 'code':
+            new_cell = new_code_cell(source=cell_content)
+        elif cell_type == 'markdown':
+            new_cell = new_markdown_cell(source=cell_content)
+        else:
+            return {"status": "error", "message": "Invalid cell type"}
+
+        nb.cells.append(new_cell)
+
+        with open(notebook_path, 'w') as f:
+            write(nb, f)
+
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.get("/download-file/{folder_name}/{file_name}")
+async def download_file(folder_name: str, file_name: str):
+    file_path = os.path.join(folder_name, file_name)
+    if os.path.isfile(file_path):
+        return FileResponse(file_path, filename=file_name)
+    else:
+        raise HTTPException(status_code=404, detail="File not found")
+
+
 
 if __name__ == "__main__":
     import uvicorn
