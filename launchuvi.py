@@ -209,7 +209,33 @@ async def add_cell(folder_name: str, notebook_name: str = Body(...), cell_conten
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+from nbformat.v4 import new_code_cell, new_markdown_cell
 
+@app.post("/update-cell/{folder_name}")
+async def update_cell(folder_name: str, notebook_name: str = Body(...), cell_index: int = Body(...), cell_content: str = Body(...), cell_type: str = Body(...)):
+    try:
+        notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{notebook_name}"
+        with open(notebook_path) as f:
+            nb = read(f, as_version=4)
+
+        if cell_type == 'code':
+            new_cell = new_code_cell(source=cell_content)
+        elif cell_type == 'markdown':
+            new_cell = new_markdown_cell(source=cell_content)
+        else:
+            return {"status": "error", "message": "Invalid cell type"}
+
+        if cell_index < 0 or cell_index >= len(nb.cells):
+            return {"status": "error", "message": "Invalid cell index"}
+
+        nb.cells[cell_index] = new_cell
+
+        with open(notebook_path, 'w') as f:
+            write(nb, f)
+
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/download-file/{folder_name}/{file_name}")
 async def download_file(folder_name: str, file_name: str):
