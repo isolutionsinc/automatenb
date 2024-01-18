@@ -12,6 +12,12 @@ import os
 import shutil
 import subprocess
 
+from pydantic import BaseModel
+
+class Notebook(BaseModel):
+    folder_name: str
+    filename: str
+
 load_dotenv()
 
 from supabase import create_client, Client
@@ -79,9 +85,9 @@ async def list_files(folder_name: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/read-notebook/{folder_name}/{filename}", response_class=Response)
-async def read_notebook(folder_name: str, filename: str):
-    notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{filename}"
+@app.post("/read-notebook", response_class=Response)
+async def read_notebook(folder_name: str = Body(...), file_name: str = Body(...)):
+    notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
     try:
         with open(notebook_path) as f:
             nb = read(f, as_version=4)
@@ -96,6 +102,24 @@ async def read_notebook(folder_name: str, filename: str):
         return Response(content=nb_json, media_type="application/json")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# @app.post("/read-notebook", response_class=Response)
+# async def read_notebook(notebook: Notebook):
+#     notebook_path = f"/home/ubuntu/automatenb/environment/{notebook.folder_name}/{notebook.filename}"
+#     try:
+#         with open(notebook_path) as f:
+#             nb = read(f, as_version=4)
+
+#         # Convert the notebook to a dictionary
+#         nb_dict = dict(nb)
+
+#         # Convert the dictionary to a JSON string
+#         nb_json = json.dumps(nb_dict)
+
+#         # Return the JSON string as a stream
+#         return Response(content=nb_json, media_type="application/json")
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/execute-cell/")
 #async def execute(notebook_path: str, cell_index: int):
