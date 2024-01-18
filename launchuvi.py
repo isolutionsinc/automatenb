@@ -22,6 +22,7 @@ from fastapi import HTTPException
 from starlette.status import HTTP_400_BAD_REQUEST
 
 from pydantic import BaseModel
+from typing import Any
 
 class FolderName(BaseModel):
     folder_name: str
@@ -122,29 +123,30 @@ async def execute(input: ExecuteCellInput):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/replace-notebook/")
-async def write_notebook(notebook_data: Dict, folder_name: str):
-    #notebook_path = notebook_data.get('path')
-    #notebook_path = os.path.join(folder_name, notebook_data.get('path'))
-    notebook_name = notebook_data.get('path')
-    notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{notebook_name}"
+class NotebookData(BaseModel):
+    folder_name: str
+    file_name: str
+    content: Any
 
+@app.post("/replace-notebook")
+async def write_notebook(input: NotebookData):
+    notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
+    print(notebook_path)
     if check_if_file_exists(notebook_path):
-        return {"status": "error", "message": "File already exists"}
-    try:
-        #notebook_path = notebook_data.get('path')
-        notebook_content = notebook_data.get('content')
+        try:
+            # Convert the dictionary to a notebook object
+            print(notebook_path)
+            nb = from_dict(input.content)
 
-        # Convert the dictionary to a notebook object
-        nb = from_dict(notebook_content)
+            # Write the notebook node to a file
+            with open(notebook_path, 'w') as f:
+                write(nb, f)
 
-        # Write the notebook node to a file
-        with open(notebook_path, 'w') as f:
-            write(nb, f)
-
-        return {"status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    else:
+        return {"status": "error", "message": "File does not exist"}
 
 @app.post("/new-notebook/")
 async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...), file_name: str = Body(...)):
