@@ -26,6 +26,10 @@ from pydantic import BaseModel
 class FolderName(BaseModel):
     folder_name: str
 
+class DeleteFileInput(BaseModel):
+    folder_name: str
+    file_name: str
+
 url = os.getenv('SUPABASE_URL')
 key = os.getenv('SUPABASE_KEY')
 supabase: Client = create_client(url, key)
@@ -169,16 +173,15 @@ async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/delete-file/{folder_name}")
-async def delete_file(folder_name: str, filename: str = Body(...)):
-    filename= json.loads(filename)['filename']
-    file_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{filename}"
-    #file_path = f"/home/ubuntu/automatenb/{filename}"
+
+@app.post("/delete-file")
+async def delete_file(input: DeleteFileInput):
+    file_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
     print(file_path)
     if os.path.isfile(file_path):
         try:
             os.remove(file_path)
-            return {"status": "success", "message": f"File {filename} has been deleted."}
+            return {"status": "success", "message": f"File {input.file_name} has been deleted."}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     else:
