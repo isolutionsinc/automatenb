@@ -12,12 +12,6 @@ import os
 import shutil
 import subprocess
 
-from pydantic import BaseModel
-
-class Notebook(BaseModel):
-    folder_name: str
-    filename: str
-
 load_dotenv()
 
 from supabase import create_client, Client
