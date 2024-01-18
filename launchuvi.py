@@ -81,10 +81,13 @@ def get_output_from_cell(nb, cell_index):
     else:
         return None
 
-@app.post("/list-files/{folder_name}")
-async def list_files(folder_name: str):
+class FolderName(BaseModel):
+    folder_name: str
+
+@app.post("/list-files")
+async def list_files(input: FolderName):
     try:
-        folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
+        folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
         files = os.listdir(folder_path)
         return {"status": "success", "files": files}
     except Exception as e:
