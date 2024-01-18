@@ -103,24 +103,6 @@ async def read_notebook(folder_name: str = Body(...), file_name: str = Body(...)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# @app.post("/read-notebook", response_class=Response)
-# async def read_notebook(notebook: Notebook):
-#     notebook_path = f"/home/ubuntu/automatenb/environment/{notebook.folder_name}/{notebook.filename}"
-#     try:
-#         with open(notebook_path) as f:
-#             nb = read(f, as_version=4)
-
-#         # Convert the notebook to a dictionary
-#         nb_dict = dict(nb)
-
-#         # Convert the dictionary to a JSON string
-#         nb_json = json.dumps(nb_dict)
-
-#         # Return the JSON string as a stream
-#         return Response(content=nb_json, media_type="application/json")
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/execute-cell/")
 #async def execute(notebook_path: str, cell_index: int):
 async def execute(folder_name: str, notebook_path: str = Body(...), cell_index: int = Body(...)):
