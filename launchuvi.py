@@ -17,6 +17,8 @@ from supabase import create_client, Client
 from starlette.responses import StreamingResponse
 import aiohttp
 import aiofiles
+from fastapi import HTTPException
+from starlette.status import HTTP_400_BAD_REQUEST
 
 #url: str = os.environ.get("SUPABASE_URL")
 #key: str = os.environ.get("SUPABASE_KEY")
@@ -197,7 +199,7 @@ async def upload_file(folder_name: str, bucket_name: str, file_name: str):
         raise HTTPException(status_code=400, detail="Folder does not exist")
     # Define the path on Supabase storage
     #path_on_supabase = f"{folder_name}/{file_name}"
-    path_on_supabase = file_name
+    path_on_supabase = f"{folder_name}/{file_name}"
 
     file_path = f"{folder_path}/{file_name}"
     if not os.path.isfile(file_path):
@@ -205,7 +207,15 @@ async def upload_file(folder_name: str, bucket_name: str, file_name: str):
 
     # Open the file in binary mode and upload it to Supabase
     with open(file_path, 'rb') as f:
-        supabase.storage.from_(bucket_name).upload(file=f, path=path_on_supabase)
+        try:
+            supabase.storage.from_(bucket_name).upload(file=f, path=path_on_supabase)
+        except Exception as e:
+            if 'Duplicate' in str(e):
+                # If the file exists, remove it and upload again
+                supabase.storage.from_(bucket_name).remove([path_on_supabase])
+                supabase.storage.from_(bucket_name).upload(file=f, path=path_on_supabase)
+            else:
+                raise
 
     file_url = supabase.storage.from_(bucket_name).get_public_url(path_on_supabase)
 
