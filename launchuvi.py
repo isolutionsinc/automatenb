@@ -276,24 +276,31 @@ async def add_cell(folder_name: str = Body(...), file_name: str = Body(...), cel
 
 from nbformat.v4 import new_code_cell, new_markdown_cell
 
-@app.post("/update-cell/{folder_name}")
-async def update_cell(folder_name: str, notebook_name: str = Body(...), cell_index: int = Body(...), cell_content: str = Body(...), cell_type: str = Body(...)):
+class UpdateCellInput(BaseModel):
+    file_name: str
+    folder_name: str
+    cell_index: int
+    cell_content: str
+    cell_type: str
+
+@app.post("/update-cell")
+async def update_cell(input: UpdateCellInput):
     try:
-        notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{notebook_name}"
+        notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
         with open(notebook_path) as f:
             nb = read(f, as_version=4)
 
-        if cell_type == 'code':
-            new_cell = new_code_cell(source=cell_content)
-        elif cell_type == 'markdown':
-            new_cell = new_markdown_cell(source=cell_content)
+        if input.cell_type == 'code':
+            new_cell = new_code_cell(source=input.cell_content)
+        elif input.cell_type == 'markdown':
+            new_cell = new_markdown_cell(source=input.cell_content)
         else:
             return {"status": "error", "message": "Invalid cell type"}
 
-        if cell_index < 0 or cell_index >= len(nb.cells):
+        if input.cell_index < 0 or input.cell_index >= len(nb.cells):
             return {"status": "error", "message": "Invalid cell index"}
 
-        nb.cells[cell_index] = new_cell
+        nb.cells[input.cell_index] = new_cell
 
         with open(notebook_path, 'w') as f:
             write(nb, f)
