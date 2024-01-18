@@ -251,10 +251,10 @@ async def delete_folder(folder_name: FolderName):
     else:
         return {"status": "error", "message": "Folder does not exist"}
 
-@app.post("/add-cell/{folder_name}")
-async def add_cell(folder_name: str, notebook_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body(...)):
+@app.post("/add-cell")
+async def add_cell(folder_name: str = Body(...), file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body(...)):
     try:
-        notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{notebook_name}"
+        notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
         with open(notebook_path) as f:
             nb = read(f, as_version=4)
 
