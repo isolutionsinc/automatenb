@@ -10,6 +10,7 @@ import json
 from dotenv import load_dotenv
 import os
 import shutil
+import subprocess
 
 load_dotenv()
 
@@ -96,7 +97,7 @@ async def read_notebook(folder_name: str, filename: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/execute-notebook/{folder_name}")
+@app.post("/execute-cell/")
 #async def execute(notebook_path: str, cell_index: int):
 async def execute(folder_name: str, notebook_path: str = Body(...), cell_index: int = Body(...)):
     try:
@@ -107,7 +108,7 @@ async def execute(folder_name: str, notebook_path: str = Body(...), cell_index: 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/write-notebook/{folder_name}")
+@app.post("/replace-notebook/")
 async def write_notebook(notebook_data: Dict, folder_name: str):
     #notebook_path = notebook_data.get('path')
     #notebook_path = os.path.join(folder_name, notebook_data.get('path'))
@@ -131,8 +132,8 @@ async def write_notebook(notebook_data: Dict, folder_name: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/notebook-environment/")
-async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)):
+@app.post("/new-notebook/")
+async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...), file_name: str = Body(...)):
     # Prepend /environment/ to the folder_name
     #folder_name = os.path.join(os.getcwd(), "/environment/", folder_name)
     folder_name = f"/home/ubuntu/automatenb/environment/{folder_name}"
@@ -141,14 +142,15 @@ async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)
     os.makedirs(folder_name, exist_ok=True)
 
     # Get the notebook path and content from the request data
-    notebook_path = notebook_data.get('path')
+    #notebook_path = notebook_data.get('path')
     notebook_content = notebook_data.get('content')
 
     # Extract the base name from the notebook path
-    notebook_basename = os.path.basename(notebook_path)
+    #notebook_basename = os.path.basename(notebook_path)
 
     # Append the new folder name to the notebook path
-    notebook_path = os.path.join(folder_name, notebook_basename)
+    #notebook_path = os.path.join(folder_name, notebook_basename)
+    notebook_path = os.path.join(folder_name, file_name)
 
     if check_if_file_exists(notebook_path):
         return {"status": "error", "message": "File already exists"}
@@ -204,22 +206,27 @@ async def upload_file(folder_name: str, bucket_name: str, file_name: str):
     file_path = f"{folder_path}/{file_name}"
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=400, detail="File does not exist")
+    print(file_path)
+    # Define the curl command
+    #curl_command = f'curl -X POST "{url}/storage/v1/object/{bucket_name}/{path_on_supabase}" -H "Authorization: Bearer {key}" -H "Content-Type: application/octet-stream" --data-binary @{file_path}'
+    curl_command = f'curl -X POST "{url}/storage/v1/object/{bucket_name}/{path_on_supabase}" -H "Authorization: Bearer {key}" --data-binary @{file_path}'
 
-    # Open the file in binary mode and upload it to Supabase
-    with open(file_path, 'rb') as f:
-        try:
-            supabase.storage.from_(bucket_name).upload(file=f, path=path_on_supabase)
-        except Exception as e:
-            if 'Duplicate' in str(e):
-                # If the file exists, remove it and upload again
-                supabase.storage.from_(bucket_name).remove([path_on_supabase])
-                supabase.storage.from_(bucket_name).upload(file=f, path=path_on_supabase)
-            else:
-                raise
+    try:
+        # Execute the curl command
+        print(curl_command)
+        process = subprocess.run(curl_command, shell=True, check=True, stdout=subprocess.PIPE, universal_newlines=True)
+        response = process.stdout
 
-    file_url = supabase.storage.from_(bucket_name).get_public_url(path_on_supabase)
+        # Parse the JSON response
+        response_json = json.loads(response)
 
-    return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}", "file_url": file_url}
+        # Get the file URL
+        #file_url = response_json['publicURL']
+
+        #return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}", "file_url": file_url}
+        return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}"}
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/delete-folder/{folder_name}")
 async def delete_folder(folder_name: str):
