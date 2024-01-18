@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile
+from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from nbformat import from_dict, write, read
@@ -29,6 +29,11 @@ class FolderName(BaseModel):
 class DeleteFileInput(BaseModel):
     folder_name: str
     file_name: str
+
+class ExecuteCellInput(BaseModel):
+    folder_name: str
+    file_name: str
+    cell_index: int
 
 url = os.getenv('SUPABASE_URL')
 key = os.getenv('SUPABASE_KEY')
@@ -103,13 +108,13 @@ async def read_notebook(folder_name: str = Body(...), file_name: str = Body(...)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/execute-cell/")
+@app.post("/execute-cell")
 #async def execute(notebook_path: str, cell_index: int):
-async def execute(folder_name: str, notebook_path: str = Body(...), cell_index: int = Body(...)):
+async def execute(input: ExecuteCellInput):
     try:
-        notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{notebook_path}"
+        notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
         nb = execute_notebook(notebook_path)
-        output = get_output_from_cell(nb, cell_index)
+        output = get_output_from_cell(nb, input.cell_index)
         return {"output": output}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
