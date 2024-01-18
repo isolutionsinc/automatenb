@@ -21,8 +21,10 @@ import aiofiles
 from fastapi import HTTPException
 from starlette.status import HTTP_400_BAD_REQUEST
 
-#url: str = os.environ.get("SUPABASE_URL")
-#key: str = os.environ.get("SUPABASE_KEY")
+from pydantic import BaseModel
+
+class FolderName(BaseModel):
+    folder_name: str
 
 url = os.getenv('SUPABASE_URL')
 key = os.getenv('SUPABASE_KEY')
@@ -228,20 +230,18 @@ async def upload_file(folder_name: str, bucket_name: str, file_name: str):
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/delete-folder/{folder_name}")
-async def delete_folder(folder_name: str):
-    folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
-    #folder_path = f"/home/ubuntu/automatenb/{folder_name}"
+
+@app.post("/delete-folder")
+async def delete_folder(folder_name: FolderName):
+    folder_path = f"/home/ubuntu/automatenb/environment/{folder_name.folder_name}"
     if os.path.isdir(folder_path):
         try:
             shutil.rmtree(folder_path)
-            return {"status": "success", "message": f"Folder {folder_name} has been deleted."}
+            return {"status": "success", "message": f"Folder {folder_name.folder_name} has been deleted."}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     else:
         return {"status": "error", "message": "Folder does not exist"}
-
-from nbformat.v4 import new_code_cell, new_markdown_cell
 
 @app.post("/add-cell/{folder_name}")
 async def add_cell(folder_name: str, notebook_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body(...)):
