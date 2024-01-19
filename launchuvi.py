@@ -314,14 +314,13 @@ async def update_cell(input: UpdateCellInput):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/download-file/{folder_name}/{file_name}")
-async def download_file(folder_name: str, file_name: str):
-    file_path = os.path.join(folder_name, file_name)
+@app.post("/download-file")
+async def download_file(folder_name: str = Body(...), file_name: str = Body(...)):
+    file_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
     if os.path.isfile(file_path):
         return FileResponse(file_path, filename=file_name)
     else:
         raise HTTPException(status_code=404, detail="File not found")
-import aiofiles
 
 @app.get("/download-supabase/{bucket_name}/{folder_name}/{file_name}")
 async def download_file(bucket_name: str, folder_name: str, file_name: str):
