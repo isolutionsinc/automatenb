@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from nbformat import from_dict, write, read
 from nbformat.v4 import new_code_cell, new_markdown_cell
-from nbconvert.preprocessors import ExecutePreprocessor
+from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
+from nbconvert import PythonExporter
 
 from typing import Dict
 import json
@@ -12,6 +13,9 @@ from dotenv import load_dotenv
 import os
 import shutil
 import subprocess
+import traceback
+import logging
+import sys
 
 load_dotenv()
 
@@ -41,6 +45,11 @@ async def verify_token(token: str = Depends(oauth2_scheme)):
 class FolderName(BaseModel):
     folder_name: str
 
+class NotebookData(BaseModel):
+    folder_name: str
+    file_name: str
+    content: Any
+
 class DeleteFileInput(BaseModel):
     folder_name: str
     file_name: str
@@ -49,6 +58,11 @@ class ExecuteCellInput(BaseModel):
     folder_name: str
     file_name: str
     cell_index: int
+
+class FileData(BaseModel):
+    bucket_name: str
+    folder_name: str
+    file_name: str
 
 url = os.getenv('SUPABASE_URL')
 key = os.getenv('SUPABASE_KEY')
@@ -75,19 +89,6 @@ def check_if_file_exists(file_path: str):
         return True
     else:
         return False
-
-def execute_notebook(notebook_path):
-    with open(notebook_path) as f:
-        nb = read(f, as_version=4)
-
-    ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
-
-    try:
-        ep.preprocess(nb)
-    except Exception as e:
-        raise e
-
-    return nb
 
 def get_output_from_cell(nb, cell_index):
     cell = nb.cells[cell_index]
@@ -126,21 +127,72 @@ async def read_notebook(folder_name: str = Body(...), file_name: str = Body(...)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def execute_notebook(notebook_path, working_dir, cell_index):
+    with open(notebook_path) as f:
+        nb = read(f, as_version=4)
+
+    # Add a code cell at the beginning of the notebook that changes the working directory
+    change_dir_cell = new_code_cell(source=f'import os\nos.chdir(r"{working_dir}")')
+    nb.cells.insert(0, change_dir_cell)
+
+    ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+
+    try:
+        ep.preprocess(nb)
+    except CellExecutionError as e:
+        tb_str = traceback.format_exc()
+        return {"status": "error", "message": "Error executing cell", "traceback": tb_str}
+
+    # Get the output from the cell at cell_index
+    output = nb.cells[cell_index + 1].outputs
+
+    return {"notebook": nb, "output": output}
+
 @app.post("/execute-cell")
-#async def execute(notebook_path: str, cell_index: int):
 async def execute(input: ExecuteCellInput, token: str = Depends(verify_token)):
     try:
-        notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
-        nb = execute_notebook(notebook_path)
-        output = get_output_from_cell(nb, input.cell_index)
-        return {"output": output}
+        folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
+        notebook_path = f"{folder_path}/{input.file_name}"
+        result = execute_notebook(notebook_path, folder_path, input.cell_index)
+        if "status" in result and result["status"] == "error":
+            return result
+        return {"notebook": result["notebook"], "output": result["output"]}
     except Exception as e:
+        logging.error(f"Error executing cell: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-class NotebookData(BaseModel):
-    folder_name: str
-    file_name: str
-    content: Any
+@app.post("/execute-cell-as-script")
+async def execute_cell_as_script(input: ExecuteCellInput, token: str = Depends(verify_token)):
+    try:
+        folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
+        notebook_path = f"{folder_path}/{input.file_name}"
+        result = execute_notebook(notebook_path, folder_path, input.cell_index)
+        if "status" in result and result["status"] == "error":
+            return result
+
+        # Convert the cell to a .py script
+        exporter = PythonExporter()
+        script, _ = exporter.from_notebook_node(result["notebook"])
+
+        # Write the script to a .py file
+        script_path = f"{folder_path}/cell_{input.cell_index}.py"
+        print(script_path)
+        with open(script_path, 'w') as f:
+            f.write(script)
+
+        # Execute the .py script and capture the output
+        process = subprocess.run(["python3", script_path], capture_output=True, text=True)
+
+        # Delete the .py script after execution
+        os.remove(script_path)
+
+        if process.returncode != 0:
+            return {"status": "error", "message": process.stderr}
+        else:
+            return {"status": "success", "output": process.stdout}
+    except Exception as e:
+        logging.error(f"Error executing cell as script: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/replace-notebook")
 async def write_notebook(input: NotebookData, token: str = Depends(verify_token)):
@@ -336,29 +388,39 @@ async def download_file(token: str = Depends(verify_token), folder_name: str = B
     else:
         raise HTTPException(status_code=404, detail="File not found")
 
-@app.get("/download-supabase/{bucket_name}/{folder_name}/{file_name}")
-async def download_file(bucket_name: str, folder_name: str, file_name: str, token: str = Depends(verify_token)):
+# @app.get("/download-supabase/{bucket_name}/{folder_name}/{file_name}")
+# async def download_file(bucket_name: str, folder_name: str, file_name: str, token: str = Depends(verify_token)):
+#     # Construct the path on Supabase storage
+#     path_on_supabase = f"{folder_name}/{file_name}"
+
+#     # Download the file from Supabase
+#     url = supabase.storage.from_(bucket_name).get_public_url(path_on_supabase)
+
+#     # Create an aiohttp client session
+#     async with aiohttp.ClientSession() as session:
+#         # Make a GET request to the file URL
+#         async with session.get(url) as resp:
+#             # Read the file content
+#             file_content = await resp.read()
+
+#     # Define the path where the file will be saved
+#     save_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
+
+#     # Write the file content to a file
+#     async with aiofiles.open(save_path, 'wb') as f:
+#         await f.write(file_content)
+
+#     return {"status": "success", "message": f"File {file_name} has been downloaded and saved to {folder_name}"}
+
+@app.post("/download-supabase")
+async def download_file(file_data: FileData, token: str = Depends(oauth2_scheme)):
     # Construct the path on Supabase storage
-    path_on_supabase = f"{folder_name}/{file_name}"
+    path_on_supabase = f"{file_data.folder_name}/{file_data.file_name}"
 
-    # Download the file from Supabase
-    url = supabase.storage.from_(bucket_name).get_public_url(path_on_supabase)
+    # Get the file URL from Supabase
+    url = supabase.storage.from_(file_data.bucket_name).get_public_url(path_on_supabase)
 
-    # Create an aiohttp client session
-    async with aiohttp.ClientSession() as session:
-        # Make a GET request to the file URL
-        async with session.get(url) as resp:
-            # Read the file content
-            file_content = await resp.read()
-
-    # Define the path where the file will be saved
-    save_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
-
-    # Write the file content to a file
-    async with aiofiles.open(save_path, 'wb') as f:
-        await f.write(file_content)
-
-    return {"status": "success", "message": f"File {file_name} has been downloaded and saved to {folder_name}"}
+    return {"status": "success", "message": f"File {file_data.file_name} URL on Supabase", "url": url}
 
 if __name__ == "__main__":
     import uvicorn
