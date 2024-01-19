@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile, Query
+from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile, Query, Depends, status
+from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from nbformat import from_dict, write, read
@@ -23,6 +24,19 @@ from starlette.status import HTTP_400_BAD_REQUEST
 
 from pydantic import BaseModel
 from typing import Any
+
+TOKEN = os.getenv("TOKEN")
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+async def verify_token(token: str = Depends(oauth2_scheme)):
+    if token != TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return token
 
 class FolderName(BaseModel):
     folder_name: str
@@ -86,7 +100,7 @@ class FolderName(BaseModel):
     folder_name: str
 
 @app.post("/list-files")
-async def list_files(input: FolderName):
+async def list_files(input: FolderName, token: str = Depends(verify_token)):
     try:
         folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
         files = os.listdir(folder_path)
@@ -95,7 +109,7 @@ async def list_files(input: FolderName):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/read-notebook", response_class=Response)
-async def read_notebook(folder_name: str = Body(...), file_name: str = Body(...)):
+async def read_notebook(folder_name: str = Body(...), file_name: str = Body(...), token: str = Depends(verify_token)):
     notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
     try:
         with open(notebook_path) as f:
@@ -114,7 +128,7 @@ async def read_notebook(folder_name: str = Body(...), file_name: str = Body(...)
 
 @app.post("/execute-cell")
 #async def execute(notebook_path: str, cell_index: int):
-async def execute(input: ExecuteCellInput):
+async def execute(input: ExecuteCellInput, token: str = Depends(verify_token)):
     try:
         notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
         nb = execute_notebook(notebook_path)
@@ -129,7 +143,7 @@ class NotebookData(BaseModel):
     content: Any
 
 @app.post("/replace-notebook")
-async def write_notebook(input: NotebookData):
+async def write_notebook(input: NotebookData, token: str = Depends(verify_token)):
     notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
     print(notebook_path)
     if check_if_file_exists(notebook_path):
@@ -149,7 +163,7 @@ async def write_notebook(input: NotebookData):
         return {"status": "error", "message": "File does not exist"}
 
 @app.post("/new-notebook/")
-async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...), file_name: str = Body(...)):
+async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...), file_name: str = Body(...), token: str = Depends(verify_token)):
     # Prepend /environment/ to the folder_name
     #folder_name = os.path.join(os.getcwd(), "/environment/", folder_name)
     folder_name = f"/home/ubuntu/automatenb/environment/{folder_name}"
@@ -185,7 +199,7 @@ async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...)
 
 
 @app.post("/delete-file")
-async def delete_file(input: DeleteFileInput):
+async def delete_file(input: DeleteFileInput, token: str = Depends(verify_token)):
     file_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
     print(file_path)
     if os.path.isfile(file_path):
@@ -198,7 +212,7 @@ async def delete_file(input: DeleteFileInput):
         return {"status": "error", "message": "File does not exist"}
 
 @app.post("/upload-file/{folder_name}")
-async def upload_file(folder_name: str, file: UploadFile = File(...)):
+async def upload_file(folder_name: str, file: UploadFile = File(...), token: str = Depends(verify_token)):
     folder_name = f"/home/ubuntu/automatenb/environment/{folder_name}"
     if not os.path.isdir(folder_name):
         raise HTTPException(status_code=400, detail="Folder does not exist")
@@ -210,7 +224,7 @@ async def upload_file(folder_name: str, file: UploadFile = File(...)):
 
 
 @app.post("/upload-supabase/{folder_name}/{bucket_name}/{file_name}")
-async def upload_file(folder_name: str, bucket_name: str, file_name: str):
+async def upload_file(folder_name: str, bucket_name: str, file_name: str, token: str = Depends(verify_token)):
     folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
     if not os.path.isdir(folder_path):
         raise HTTPException(status_code=400, detail="Folder does not exist")
@@ -245,7 +259,7 @@ async def upload_file(folder_name: str, bucket_name: str, file_name: str):
 
 
 @app.post("/delete-folder")
-async def delete_folder(folder_name: FolderName):
+async def delete_folder(folder_name: FolderName, token: str = Depends(verify_token)):
     folder_path = f"/home/ubuntu/automatenb/environment/{folder_name.folder_name}"
     if os.path.isdir(folder_path):
         try:
@@ -257,7 +271,7 @@ async def delete_folder(folder_name: FolderName):
         return {"status": "error", "message": "Folder does not exist"}
 
 @app.post("/add-cell")
-async def add_cell(folder_name: str = Body(...), file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body(...)):
+async def add_cell(folder_name: str = Body(...), file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body(...), token: str = Depends(verify_token)):
     try:
         notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
         with open(notebook_path) as f:
@@ -289,7 +303,7 @@ class UpdateCellInput(BaseModel):
     cell_type: str
 
 @app.post("/update-cell")
-async def update_cell(input: UpdateCellInput):
+async def update_cell(input: UpdateCellInput, token: str = Depends(verify_token)):
     try:
         notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
         with open(notebook_path) as f:
@@ -315,7 +329,7 @@ async def update_cell(input: UpdateCellInput):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/download-file")
-async def download_file(folder_name: str = Body(...), file_name: str = Body(...)):
+async def download_file(token: str = Depends(verify_token), folder_name: str = Body(...), file_name: str = Body(...)):
     file_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
     if os.path.isfile(file_path):
         return FileResponse(file_path, filename=file_name)
@@ -323,7 +337,7 @@ async def download_file(folder_name: str = Body(...), file_name: str = Body(...)
         raise HTTPException(status_code=404, detail="File not found")
 
 @app.get("/download-supabase/{bucket_name}/{folder_name}/{file_name}")
-async def download_file(bucket_name: str, folder_name: str, file_name: str):
+async def download_file(bucket_name: str, folder_name: str, file_name: str, token: str = Depends(verify_token)):
     # Construct the path on Supabase storage
     path_on_supabase = f"{folder_name}/{file_name}"
 
