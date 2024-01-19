@@ -7,7 +7,7 @@ from nbformat.v4 import new_code_cell, new_markdown_cell
 from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
 from nbconvert import PythonExporter
 
-from typing import Dict
+from typing import Dict, List, Optional
 import json
 from dotenv import load_dotenv
 import os
@@ -45,7 +45,7 @@ async def verify_token(token: str = Depends(oauth2_scheme)):
 class FolderName(BaseModel):
     folder_name: str
 
-class NotebookData(BaseModel):
+class ReplaceNotebookData(BaseModel):
     folder_name: str
     file_name: str
     content: Any
@@ -59,10 +59,43 @@ class ExecuteCellInput(BaseModel):
     file_name: str
     cell_index: int
 
-class FileData(BaseModel):
+class ExecuteNotebook(BaseModel):
+    folder_name: str
+    file_name: str
+
+class DLFileData(BaseModel):
     bucket_name: str
     folder_name: str
     file_name: str
+    expiry_duration: int
+
+class ULFileData(BaseModel):
+    bucket_name: str
+    folder_name: str
+    file_name: str
+    expiry_duration: int
+
+class Cell(BaseModel):
+    cell_type: Optional[str] = "code"
+    execution_count: Optional[None] = None
+    metadata: Optional[dict] = {}
+    outputs: Optional[List] = []
+    source: Optional[List[str]] = [""]
+
+class Content(BaseModel):
+    cells: List[Cell]
+    metadata: Optional[dict] = {}
+    nbformat: Optional[int] = 4
+    nbformat_minor: Optional[int] = 4
+
+class NotebookData(BaseModel):
+    content: Content
+
+class Notebook(BaseModel):
+    file_name: Optional[str] = "default.ipynb"
+    folder_name: Optional[str] = "default"
+    notebook_data: NotebookData
+
 
 url = os.getenv('SUPABASE_URL')
 key = os.getenv('SUPABASE_KEY')
@@ -99,6 +132,9 @@ def get_output_from_cell(nb, cell_index):
 
 class FolderName(BaseModel):
     folder_name: str
+
+def handle_input(notebook: Notebook):
+    return notebook
 
 @app.post("/list-files")
 async def list_files(input: FolderName, token: str = Depends(verify_token)):
@@ -148,12 +184,13 @@ def execute_notebook(notebook_path, working_dir, cell_index):
 
     return {"notebook": nb, "output": output}
 
-@app.post("/execute-cell")
-async def execute(input: ExecuteCellInput, token: str = Depends(verify_token)):
+@app.post("/execute-notebook")
+async def execute(input: ExecuteNotebook, token: str = Depends(verify_token)):
     try:
         folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
         notebook_path = f"{folder_path}/{input.file_name}"
-        result = execute_notebook(notebook_path, folder_path, input.cell_index)
+        cell_index = 0
+        result = execute_notebook(notebook_path, folder_path, cell_index)
         if "status" in result and result["status"] == "error":
             return result
         return {"notebook": result["notebook"], "output": result["output"]}
@@ -195,7 +232,7 @@ async def execute_cell_as_script(input: ExecuteCellInput, token: str = Depends(v
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/replace-notebook")
-async def write_notebook(input: NotebookData, token: str = Depends(verify_token)):
+async def write_notebook(input: ReplaceNotebookData, token: str = Depends(verify_token)):
     notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
     print(notebook_path)
     if check_if_file_exists(notebook_path):
@@ -275,38 +312,68 @@ async def upload_file(folder_name: str, file: UploadFile = File(...), token: str
     return {"filename": file.filename}
 
 
-@app.post("/upload-supabase/{folder_name}/{bucket_name}/{file_name}")
-async def upload_file(folder_name: str, bucket_name: str, file_name: str, token: str = Depends(verify_token)):
-    folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
+# @app.post("/upload-supabase/{folder_name}/{bucket_name}/{file_name}")
+# async def upload_file(folder_name: str, bucket_name: str, file_name: str, token: str = Depends(verify_token)):
+#     folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
+#     if not os.path.isdir(folder_path):
+#         raise HTTPException(status_code=400, detail="Folder does not exist")
+#     # Define the path on Supabase storage
+#     #path_on_supabase = f"{folder_name}/{file_name}"
+#     path_on_supabase = f"{folder_name}/{file_name}"
+
+#     file_path = f"{folder_path}/{file_name}"
+#     if not os.path.isfile(file_path):
+#         raise HTTPException(status_code=400, detail="File does not exist")
+#     print(file_path)
+#     # Define the curl command
+#     #curl_command = f'curl -X POST "{url}/storage/v1/object/{bucket_name}/{path_on_supabase}" -H "Authorization: Bearer {key}" -H "Content-Type: application/octet-stream" --data-binary @{file_path}'
+#     curl_command = f'curl -X POST "{url}/storage/v1/object/{bucket_name}/{path_on_supabase}" -H "Authorization: Bearer {key}" --data-binary @{file_path}'
+
+#     try:
+#         # Execute the curl command
+#         print(curl_command)
+#         process = subprocess.run(curl_command, shell=True, check=True, stdout=subprocess.PIPE, universal_newlines=True)
+#         response = process.stdout
+
+#         # Parse the JSON response
+#         response_json = json.loads(response)
+
+#         # Get the file URL
+#         #file_url = response_json['publicURL']
+
+#         #return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}", "file_url": file_url}
+#         return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}"}
+#     except subprocess.CalledProcessError as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/upload-url")
+async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
+    folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
     if not os.path.isdir(folder_path):
         raise HTTPException(status_code=400, detail="Folder does not exist")
-    # Define the path on Supabase storage
-    #path_on_supabase = f"{folder_name}/{file_name}"
-    path_on_supabase = f"{folder_name}/{file_name}"
 
-    file_path = f"{folder_path}/{file_name}"
+    path_on_supabase = f"{input.folder_name}/{input.file_name}"
+    print(path_on_supabase)
+
+    file_path = f"{folder_path}/{input.file_name}"
+    print(file_path)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=400, detail="File does not exist")
-    print(file_path)
-    # Define the curl command
-    #curl_command = f'curl -X POST "{url}/storage/v1/object/{bucket_name}/{path_on_supabase}" -H "Authorization: Bearer {key}" -H "Content-Type: application/octet-stream" --data-binary @{file_path}'
-    curl_command = f'curl -X POST "{url}/storage/v1/object/{bucket_name}/{path_on_supabase}" -H "Authorization: Bearer {key}" --data-binary @{file_path}'
 
     try:
-        # Execute the curl command
-        print(curl_command)
-        process = subprocess.run(curl_command, shell=True, check=True, stdout=subprocess.PIPE, universal_newlines=True)
-        response = process.stdout
 
-        # Parse the JSON response
-        response_json = json.loads(response)
+        # Delete the existing file if it exists
+        supabase.storage.from_(input.bucket_name).remove([path_on_supabase])
+
+        with open(file_path, 'rb') as f:
+            supabase.storage.from_(input.bucket_name).upload(file=f, path=path_on_supabase, file_options={"content-type": "audio/mpeg"})
 
         # Get the file URL
-        #file_url = response_json['publicURL']
+        file_url = supabase.storage.from_(input.bucket_name).get_public_url(path_on_supabase)
+        res = supabase.storage.from_(input.bucket_name).create_signed_url(path_on_supabase, input.expiry_duration)
 
-        #return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}", "file_url": file_url}
-        return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}"}
-    except subprocess.CalledProcessError as e:
+        return {"status": "success", "message": f"File {input.file_name} has been uploaded to {input.bucket_name}", "file_url": file_url, "signed_url": res}
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -388,39 +455,17 @@ async def download_file(token: str = Depends(verify_token), folder_name: str = B
     else:
         raise HTTPException(status_code=404, detail="File not found")
 
-# @app.get("/download-supabase/{bucket_name}/{folder_name}/{file_name}")
-# async def download_file(bucket_name: str, folder_name: str, file_name: str, token: str = Depends(verify_token)):
-#     # Construct the path on Supabase storage
-#     path_on_supabase = f"{folder_name}/{file_name}"
-
-#     # Download the file from Supabase
-#     url = supabase.storage.from_(bucket_name).get_public_url(path_on_supabase)
-
-#     # Create an aiohttp client session
-#     async with aiohttp.ClientSession() as session:
-#         # Make a GET request to the file URL
-#         async with session.get(url) as resp:
-#             # Read the file content
-#             file_content = await resp.read()
-
-#     # Define the path where the file will be saved
-#     save_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
-
-#     # Write the file content to a file
-#     async with aiofiles.open(save_path, 'wb') as f:
-#         await f.write(file_content)
-
-#     return {"status": "success", "message": f"File {file_name} has been downloaded and saved to {folder_name}"}
-
-@app.post("/download-supabase")
-async def download_file(file_data: FileData, token: str = Depends(oauth2_scheme)):
+@app.post("/download-url")
+async def download_file(file_data: DLFileData, token: str = Depends(oauth2_scheme)):
     # Construct the path on Supabase storage
     path_on_supabase = f"{file_data.folder_name}/{file_data.file_name}"
 
     # Get the file URL from Supabase
-    url = supabase.storage.from_(file_data.bucket_name).get_public_url(path_on_supabase)
+    #url = supabase.storage.from_(file_data.bucket_name).get_public_url(path_on_supabase)
+    #Signed URL with Expiry
+    res = supabase.storage.from_(file_data.bucket_name).create_signed_url(path_on_supabase, file_data.expiry_duration)
 
-    return {"status": "success", "message": f"File {file_data.file_name} URL on Supabase", "url": url}
+    return {"status": "success", "message": f"File {file_data.file_name} URL on Supabase", "url": url, "signed_url": res}
 
 if __name__ == "__main__":
     import uvicorn
