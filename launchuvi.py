@@ -320,6 +320,7 @@ async def upload_file(folder_name: str, file: UploadFile = File(...), token: str
 
     return {"filename": file.filename}
 
+#Uploads file to fs from any URL
 @app.post("/upload-url")
 async def download_file(input: DownloadFileInput, token: str = Depends(verify_token)):
     folder_name = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
@@ -407,6 +408,7 @@ async def update_cell(input: UpdateCellInput, token: str = Depends(verify_token)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# downloads file from fs to client
 @app.post("/download-file")
 async def download_file(token: str = Depends(verify_token), folder_name: str = Body(...), file_name: str = Body(...)):
     file_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
@@ -415,18 +417,17 @@ async def download_file(token: str = Depends(verify_token), folder_name: str = B
     else:
         raise HTTPException(status_code=404, detail="File not found")
 
-@app.post("/download-url")
 
+#uploads file to supabase and returns SignedURL  
+@app.post("/download-url")
 async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
     folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
     if not os.path.isdir(folder_path):
         raise HTTPException(status_code=400, detail="Folder does not exist")
 
     path_on_supabase = f"{input.folder_name}/{input.file_name}"
-    print(path_on_supabase)
 
     file_path = f"{folder_path}/{input.file_name}"
-    print(file_path)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=400, detail="File does not exist")
 
@@ -439,10 +440,11 @@ async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
             supabase.storage.from_(input.bucket_name).upload(file=f, path=path_on_supabase)
 
         # Get the file URL
-        file_url = supabase.storage.from_(input.bucket_name).get_public_url(path_on_supabase)
+        #file_url = supabase.storage.from_(input.bucket_name).get_public_url(path_on_supabase)
         res = supabase.storage.from_(input.bucket_name).create_signed_url(path_on_supabase, input.expiry_duration)
 
-        return {"status": "success", "message": f"File {input.file_name} has been uploaded to {input.bucket_name}", "file_url": file_url, "signed_url": res}
+        #return {"status": "success", "message": f"File {input.file_name} has been uploaded to {input.bucket_name}", "file_url": file_url, "signed_url": res}
+        return {"status": "success", "message": f"File {input.file_name} has been uploaded to {input.bucket_name}", "signed_url": res}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 if __name__ == "__main__":
