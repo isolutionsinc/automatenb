@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from nbformat import from_dict, write, read
 from nbformat.v4 import new_code_cell, new_markdown_cell
 from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
-from nbconvert import PythonExporter
+from nbconvert import PythonExporter, NotebookExporter
 
 from typing import Dict, List, Optional
 import json
@@ -252,37 +252,40 @@ async def write_notebook(input: ReplaceNotebookData, token: str = Depends(verify
         return {"status": "error", "message": "File does not exist"}
 
 @app.post("/new-notebook/")
-async def notebook_environment(notebook_data: Dict, folder_name: str = Body(...), file_name: str = Body(...), token: str = Depends(verify_token)):
-    # Prepend /environment/ to the folder_name
-    #folder_name = os.path.join(os.getcwd(), "/environment/", folder_name)
+async def notebook_environment(notebook: Notebook, token: str = Depends(verify_token)):
+    notebook_data = handle_input(notebook)
+    folder_name = notebook_data.folder_name
+    file_name = notebook_data.file_name
+    notebook_content = notebook_data.notebook_data.content.dict()  # Convert to dictionary
+
     folder_name = f"/home/ubuntu/automatenb/environment/{folder_name}"
     print(folder_name)
-    # Create a new directory with the folder_name as its name
     os.makedirs(folder_name, exist_ok=True)
 
-    # Get the notebook path and content from the request data
-    #notebook_path = notebook_data.get('path')
-    notebook_content = notebook_data.get('content')
-
-    # Extract the base name from the notebook path
-    #notebook_basename = os.path.basename(notebook_path)
-
-    # Append the new folder name to the notebook path
-    #notebook_path = os.path.join(folder_name, notebook_basename)
     notebook_path = os.path.join(folder_name, file_name)
 
     if check_if_file_exists(notebook_path):
         return {"status": "error", "message": "File already exists"}
 
     try:
+        # Convert the list of strings into a single string for each cell
+        for cell in notebook_content['cells']:
+            cell['source'] = '\n'.join(cell['source'])
         # Convert the dictionary to a notebook object
         nb = from_dict(notebook_content)
 
         # Write the notebook node to a file
         with open(notebook_path, 'w') as f:
             write(nb, f)
+        # Execute the notebook
+        ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+        ep.preprocess(nb, {'metadata': {'path': folder_name}})
 
-        return {"status": "success"}
+        # Convert the executed notebook to HTML
+        exporter = NotebookExporter()
+        (body, resources) = exporter.from_notebook_node(nb)
+
+        return {"status": "success", "output": body}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -311,41 +314,6 @@ async def upload_file(folder_name: str, file: UploadFile = File(...), token: str
 
     return {"filename": file.filename}
 
-
-# @app.post("/upload-supabase/{folder_name}/{bucket_name}/{file_name}")
-# async def upload_file(folder_name: str, bucket_name: str, file_name: str, token: str = Depends(verify_token)):
-#     folder_path = f"/home/ubuntu/automatenb/environment/{folder_name}"
-#     if not os.path.isdir(folder_path):
-#         raise HTTPException(status_code=400, detail="Folder does not exist")
-#     # Define the path on Supabase storage
-#     #path_on_supabase = f"{folder_name}/{file_name}"
-#     path_on_supabase = f"{folder_name}/{file_name}"
-
-#     file_path = f"{folder_path}/{file_name}"
-#     if not os.path.isfile(file_path):
-#         raise HTTPException(status_code=400, detail="File does not exist")
-#     print(file_path)
-#     # Define the curl command
-#     #curl_command = f'curl -X POST "{url}/storage/v1/object/{bucket_name}/{path_on_supabase}" -H "Authorization: Bearer {key}" -H "Content-Type: application/octet-stream" --data-binary @{file_path}'
-#     curl_command = f'curl -X POST "{url}/storage/v1/object/{bucket_name}/{path_on_supabase}" -H "Authorization: Bearer {key}" --data-binary @{file_path}'
-
-#     try:
-#         # Execute the curl command
-#         print(curl_command)
-#         process = subprocess.run(curl_command, shell=True, check=True, stdout=subprocess.PIPE, universal_newlines=True)
-#         response = process.stdout
-
-#         # Parse the JSON response
-#         response_json = json.loads(response)
-
-#         # Get the file URL
-#         #file_url = response_json['publicURL']
-
-#         #return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}", "file_url": file_url}
-#         return {"status": "success", "message": f"File {file_name} has been uploaded to {bucket_name}"}
-#     except subprocess.CalledProcessError as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/upload-url")
 async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
     folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
@@ -366,7 +334,7 @@ async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
         supabase.storage.from_(input.bucket_name).remove([path_on_supabase])
 
         with open(file_path, 'rb') as f:
-            supabase.storage.from_(input.bucket_name).upload(file=f, path=path_on_supabase, file_options={"content-type": "audio/mpeg"})
+            supabase.storage.from_(input.bucket_name).upload(file=f, path=path_on_supabase)
 
         # Get the file URL
         file_url = supabase.storage.from_(input.bucket_name).get_public_url(path_on_supabase)
