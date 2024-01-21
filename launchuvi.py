@@ -16,6 +16,7 @@ import subprocess
 import traceback
 import logging
 import sys
+import requests
 
 load_dotenv()
 
@@ -58,6 +59,11 @@ class ExecuteCellInput(BaseModel):
     folder_name: str
     file_name: str
     cell_index: int
+
+class DownloadFileInput(BaseModel):
+    url: str
+    folder_name: str
+    file_name: str
 
 class ExecuteNotebook(BaseModel):
     folder_name: str
@@ -315,35 +321,21 @@ async def upload_file(folder_name: str, file: UploadFile = File(...), token: str
     return {"filename": file.filename}
 
 @app.post("/upload-url")
-async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
-    folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
-    if not os.path.isdir(folder_path):
-        raise HTTPException(status_code=400, detail="Folder does not exist")
-
-    path_on_supabase = f"{input.folder_name}/{input.file_name}"
-    print(path_on_supabase)
-
-    file_path = f"{folder_path}/{input.file_name}"
-    print(file_path)
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=400, detail="File does not exist")
+async def download_file(input: DownloadFileInput, token: str = Depends(verify_token)):
+    folder_name = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
+    if not os.path.isdir(folder_name):
+        os.makedirs(folder_name, exist_ok=True)
+    file_path = f"{folder_name}/{input.file_name}"
 
     try:
-
-        # Delete the existing file if it exists
-        supabase.storage.from_(input.bucket_name).remove([path_on_supabase])
-
-        with open(file_path, 'rb') as f:
-            supabase.storage.from_(input.bucket_name).upload(file=f, path=path_on_supabase)
-
-        # Get the file URL
-        file_url = supabase.storage.from_(input.bucket_name).get_public_url(path_on_supabase)
-        res = supabase.storage.from_(input.bucket_name).create_signed_url(path_on_supabase, input.expiry_duration)
-
-        return {"status": "success", "message": f"File {input.file_name} has been uploaded to {input.bucket_name}", "file_url": file_url, "signed_url": res}
+        with requests.get(input.url, stream=True) as r:
+            r.raise_for_status()
+            with open(file_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        return {"filename": input.file_name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/delete-folder")
 async def delete_folder(folder_name: FolderName, token: str = Depends(verify_token)):
@@ -424,17 +416,35 @@ async def download_file(token: str = Depends(verify_token), folder_name: str = B
         raise HTTPException(status_code=404, detail="File not found")
 
 @app.post("/download-url")
-async def download_file(file_data: DLFileData, token: str = Depends(oauth2_scheme)):
-    # Construct the path on Supabase storage
-    path_on_supabase = f"{file_data.folder_name}/{file_data.file_name}"
 
-    # Get the file URL from Supabase
-    #url = supabase.storage.from_(file_data.bucket_name).get_public_url(path_on_supabase)
-    #Signed URL with Expiry
-    res = supabase.storage.from_(file_data.bucket_name).create_signed_url(path_on_supabase, file_data.expiry_duration)
+async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
+    folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
+    if not os.path.isdir(folder_path):
+        raise HTTPException(status_code=400, detail="Folder does not exist")
 
-    return {"status": "success", "message": f"File {file_data.file_name} URL on Supabase", "url": url, "signed_url": res}
+    path_on_supabase = f"{input.folder_name}/{input.file_name}"
+    print(path_on_supabase)
 
+    file_path = f"{folder_path}/{input.file_name}"
+    print(file_path)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=400, detail="File does not exist")
+
+    try:
+
+        # Delete the existing file if it exists
+        supabase.storage.from_(input.bucket_name).remove([path_on_supabase])
+
+        with open(file_path, 'rb') as f:
+            supabase.storage.from_(input.bucket_name).upload(file=f, path=path_on_supabase)
+
+        # Get the file URL
+        file_url = supabase.storage.from_(input.bucket_name).get_public_url(path_on_supabase)
+        res = supabase.storage.from_(input.bucket_name).create_signed_url(path_on_supabase, input.expiry_duration)
+
+        return {"status": "success", "message": f"File {input.file_name} has been uploaded to {input.bucket_name}", "file_url": file_url, "signed_url": res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5000)
