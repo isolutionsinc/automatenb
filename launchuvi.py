@@ -447,6 +447,13 @@ async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
         return {"status": "success", "message": f"File {input.file_name} has been uploaded to {input.bucket_name}", "signed_url": res}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/environment")
+async def get_file(token: str = Depends(verify_token)):
+    return FileResponse('/home/ubuntu/automatenb/environment.txt')
+
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=5000)
