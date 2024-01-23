@@ -88,6 +88,18 @@ class Cell(BaseModel):
     outputs: Optional[List] = []
     source: Optional[List[str]] = [""]
 
+class UpdateCellInput(BaseModel):
+    file_name: str
+    folder_name: str
+    cell_index: int
+    cell_content: str
+    cell_type: str
+
+class DeleteCellInput(BaseModel):
+    file_name: str
+    folder_name: str
+    cell_index: int
+
 class Content(BaseModel):
     cells: List[Cell]
     metadata: Optional[dict] = {}
@@ -373,13 +385,6 @@ async def add_cell(folder_name: str = Body(...), file_name: str = Body(...), cel
 
 from nbformat.v4 import new_code_cell, new_markdown_cell
 
-class UpdateCellInput(BaseModel):
-    file_name: str
-    folder_name: str
-    cell_index: int
-    cell_content: str
-    cell_type: str
-
 @app.post("/update-cell")
 async def update_cell(input: UpdateCellInput, token: str = Depends(verify_token)):
     try:
@@ -398,6 +403,25 @@ async def update_cell(input: UpdateCellInput, token: str = Depends(verify_token)
             return {"status": "error", "message": "Invalid cell index"}
 
         nb.cells[input.cell_index] = new_cell
+
+        with open(notebook_path, 'w') as f:
+            write(nb, f)
+
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/delete-cell")
+async def delete_cell(input: DeleteCellInput, token: str = Depends(verify_token)):
+    try:
+        notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
+        with open(notebook_path) as f:
+            nb = read(f, as_version=4)
+
+        if input.cell_index < 0 or input.cell_index >= len(nb.cells):
+            return {"status": "error", "message": "Invalid cell index"}
+
+        del nb.cells[input.cell_index]
 
         with open(notebook_path, 'w') as f:
             write(nb, f)
