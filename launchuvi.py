@@ -379,15 +379,14 @@ async def add_cell(folder_name: str = Body(...), file_name: str = Body(...), cel
             return {"status": "error", "message": "Invalid cell type"}
 
         nb.cells.append(new_cell)
+        new_cell_index = len(nb.cells)
 
         with open(notebook_path, 'w') as f:
             write(nb, f)
 
-        return {"status": "success"}
+        return {"status": "success", "cell_index": new_cell_index}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-from nbformat.v4 import new_code_cell, new_markdown_cell
 
 @app.post("/update-cell")
 async def update_cell(input: UpdateCellInput, token: str = Depends(verify_token)):
