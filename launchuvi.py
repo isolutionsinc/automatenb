@@ -204,38 +204,38 @@ async def execute(input: ExecuteNotebook, token: str = Depends(verify_token)):
         logging.error(f"Error executing cell: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/execute-cell-as-script")
-async def execute_cell_as_script(input: ExecuteCellInput, token: str = Depends(verify_token)):
-    try:
-        folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
-        notebook_path = f"{folder_path}/{input.file_name}"
-        result = execute_notebook(notebook_path, folder_path, input.cell_index)
-        if "status" in result and result["status"] == "error":
-            return result
+# @app.post("/execute-cell-as-script")
+# async def execute_cell_as_script(input: ExecuteCellInput, token: str = Depends(verify_token)):
+#     try:
+#         folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
+#         notebook_path = f"{folder_path}/{input.file_name}"
+#         result = execute_notebook(notebook_path, folder_path, input.cell_index)
+#         if "status" in result and result["status"] == "error":
+#             return result
 
-        # Convert the cell to a .py script
-        exporter = PythonExporter()
-        script, _ = exporter.from_notebook_node(result["notebook"])
+#         # Convert the cell to a .py script
+#         exporter = PythonExporter()
+#         script, _ = exporter.from_notebook_node(result["notebook"])
 
-        # Write the script to a .py file
-        script_path = f"{folder_path}/cell_{input.cell_index}.py"
-        print(script_path)
-        with open(script_path, 'w') as f:
-            f.write(script)
+#         # Write the script to a .py file
+#         script_path = f"{folder_path}/cell_{input.cell_index}.py"
+#         print(script_path)
+#         with open(script_path, 'w') as f:
+#             f.write(script)
 
-        # Execute the .py script and capture the output
-        process = subprocess.run(["python3", script_path], capture_output=True, text=True)
+#         # Execute the .py script and capture the output
+#         process = subprocess.run(["python3", script_path], capture_output=True, text=True)
 
-        # Delete the .py script after execution
-        os.remove(script_path)
+#         # Delete the .py script after execution
+#         os.remove(script_path)
 
-        if process.returncode != 0:
-            return {"status": "error", "message": process.stderr}
-        else:
-            return {"status": "success", "output": process.stdout}
-    except Exception as e:
-        logging.error(f"Error executing cell as script: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+#         if process.returncode != 0:
+#             return {"status": "error", "message": process.stderr}
+#         else:
+#             return {"status": "success", "output": process.stdout}
+#     except Exception as e:
+#         logging.error(f"Error executing cell as script: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/replace-notebook")
 async def write_notebook(input: ReplaceNotebookData, token: str = Depends(verify_token)):
@@ -270,8 +270,8 @@ async def notebook_environment(notebook: Notebook, token: str = Depends(verify_t
 
     notebook_path = os.path.join(folder_name, file_name)
 
-    if check_if_file_exists(notebook_path):
-        return {"status": "error", "message": "File already exists"}
+    # if check_if_file_exists(notebook_path):
+    #     return {"status": "error", "message": "File already exists"}
 
     try:
         # Convert the list of strings into a single string for each cell
