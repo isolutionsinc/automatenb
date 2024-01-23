@@ -322,10 +322,18 @@ async def notebook_environment(notebook: Notebook, token: str = Depends(verify_t
         ep.preprocess(nb, {'metadata': {'path': folder_name}})
 
         # Convert the executed notebook to HTML
-        exporter = NotebookExporter()
-        (body, resources) = exporter.from_notebook_node(nb)
+        # exporter = NotebookExporter()
+        # (body, resources) = exporter.from_notebook_node(nb)
+        # Prepare cells for output
+        cells = []
+        for cell in nb.cells:
+            cells.append({
+                "outputs": cell.outputs,
+                "source": cell.source
+            })
 
-        return {"status": "success", "output": body}
+        #return {"status": "success", "output": body}
+        return {"status": "success", "output": {"cells": cells}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
