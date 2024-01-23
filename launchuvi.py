@@ -237,25 +237,23 @@ async def execute(input: ExecuteNotebook, token: str = Depends(verify_token)):
 #         logging.error(f"Error executing cell as script: {e}")
 #         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/replace-notebook")
-async def write_notebook(input: ReplaceNotebookData, token: str = Depends(verify_token)):
-    notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
-    print(notebook_path)
-    if check_if_file_exists(notebook_path):
-        try:
-            # Convert the dictionary to a notebook object
-            print(notebook_path)
-            nb = from_dict(input.content)
+# @app.post("/replace-notebook")
+# async def write_notebook(input: ReplaceNotebookData, token: str = Depends(verify_token)):
+#     notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
+#     if check_if_file_exists(notebook_path):
+#         try:
+#             # Convert the dictionary to a notebook object
+#             nb = from_dict(input.content)
 
-            # Write the notebook node to a file
-            with open(notebook_path, 'w') as f:
-                write(nb, f)
+#             # Write the notebook node to a file
+#             with open(notebook_path, 'w') as f:
+#                 write(nb, f)
 
-            return {"status": "success"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-    else:
-        return {"status": "error", "message": "File does not exist"}
+#             return {"status": "success"}
+#         except Exception as e:
+#             raise HTTPException(status_code=500, detail=str(e))
+#     else:
+#         return {"status": "error", "message": "File does not exist"}
 
 @app.post("/new-notebook/")
 async def notebook_environment(notebook: Notebook, token: str = Depends(verify_token)):
