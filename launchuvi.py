@@ -197,8 +197,12 @@ def execute_notebook(notebook_path, working_dir, cell_index):
         tb_str = traceback.format_exc()
         return {"status": "error", "message": "Error executing cell", "traceback": tb_str}
 
+    # Remove the change_dir_cell after execution
+    nb.cells.pop(0)
+
     # Get the output from the cell at cell_index
-    output = nb.cells[cell_index + 1].outputs
+    #output = nb.cells[cell_index + 1].outputs
+    output = nb.cells[cell_index].outputs
 
     return {"notebook": nb, "output": output}
 
