@@ -215,7 +215,16 @@ def execute_notebook(notebook_path, working_dir, cell_index):
     #output = nb.cells[cell_index + 1].outputs
     output = nb.cells[cell_index].outputs
 
-    return {"notebook": nb, "output": output}
+    # Prepare cells for output
+    cells = []
+    for cell in nb.cells:
+        cells.append({
+            "outputs": cell.outputs,
+            "source": cell.source
+        })
+
+    #return {"notebook": nb, "output": output}
+    return {"notebook": {"cells": cells}, "output": output}
 
 @app.post("/execute-notebook")
 async def execute(input: ExecuteNotebook, token: str = Depends(verify_token)):
