@@ -174,10 +174,21 @@ async def read_notebook(folder_name: str = Body(...), file_name: str = Body(...)
         nb_dict = dict(nb)
 
         # Convert the dictionary to a JSON string
-        nb_json = json.dumps(nb_dict)
+        # nb_json = json.dumps(nb_dict)
+
+        # Extract only the cells part of the notebook
+        cells = nb_dict['cells']
+
+        # For each cell, keep only the 'outputs' and 'source' fields
+        cells = [{'outputs': cell['outputs'], 'source': cell['source']} for cell in cells]
+
+        # Convert the cells to a JSON string
+        cells_json = json.dumps({"cells": cells})
 
         # Return the JSON string as a stream
-        return Response(content=nb_json, media_type="application/json")
+        #return Response(content=nb_json, media_type="application/json")
+        return Response(content=cells_json, media_type="application/json")
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
