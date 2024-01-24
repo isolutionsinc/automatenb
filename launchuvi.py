@@ -93,7 +93,7 @@ class UpdateCellInput(BaseModel):
     folder_name: str
     cell_index: int
     cell_content: str
-    cell_type: str
+    cell_type: str = "code"
 
 class DeleteCellInput(BaseModel):
     file_name: str
@@ -183,7 +183,7 @@ async def read_notebook(folder_name: str = Body(...), file_name: str = Body(...)
         cells = [{'outputs': cell['outputs'], 'source': cell['source']} for cell in cells]
 
         # Convert the cells to a JSON string
-        cells_json = json.dumps({"cells": cells})
+        cells_json = json.dumps({"notebook": {"cells": cells}})
 
         # Return the JSON string as a stream
         #return Response(content=nb_json, media_type="application/json")
@@ -291,21 +291,90 @@ async def execute(input: ExecuteNotebook, token: str = Depends(verify_token)):
 #     else:
 #         return {"status": "error", "message": "File does not exist"}
 
+# @app.post("/new-notebook/")
+# #async def notebook_environment(notebook: Notebook, token: str = Depends(verify_token)):
+# async def notebook_environment(notebook: Notebook, execute: bool = Body(...), token: str = Depends(verify_token)):
+#     # Transform the request body
+#     cells = [{"cell_type": "code", "source": cell.split('\n')} for cell in request['cells']]
+#     notebook_data = {
+#         "execute": request['execute'],
+#         "file_name": request['file_name'],
+#         "folder_name": request['folder_name'],
+#         "notebook_data": {
+#             "content": {
+#                 "cells": cells
+#             }
+#         }
+#     }
+#     # Convert the transformed request body into a Notebook instance
+#     notebook = Notebook(**notebook_data)
+#     notebook_data = handle_input(notebook)
+#     folder_name = notebook_data.folder_name
+#     file_name = notebook_data.file_name
+#     notebook_content = notebook_data.notebook_data.content.dict()  # Convert to dictionary
+
+#     folder_name = f"/home/ubuntu/automatenb/environment/{folder_name}"
+#     os.makedirs(folder_name, exist_ok=True)
+
+#     notebook_path = os.path.join(folder_name, file_name)
+
+#     # if check_if_file_exists(notebook_path):
+#     #     return {"status": "error", "message": "File already exists"}
+
+#     try:
+#         # Convert the list of strings into a single string for each cell
+#         for cell in notebook_content['cells']:
+#             cell['source'] = '\n'.join(cell['source'])
+#         # Convert the dictionary to a notebook object
+#         nb = from_dict(notebook_content)
+
+#         # Write the notebook node to a file
+#         with open(notebook_path, 'w') as f:
+#             write(nb, f)
+#         # Execute the notebook if execute is True
+#         # if execute: 
+#         #     ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+#         #     ep.preprocess(nb, {'metadata': {'path': folder_name}})
+#         ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+#         ep.preprocess(nb, {'metadata': {'path': folder_name}})
+
+#         # Prepare cells for output
+#         cells = []
+#         for cell in nb.cells:
+#             cells.append({
+#                 "outputs": cell.outputs,
+#                 "source": cell.source
+#             })
+
+#         #return {"status": "success", "output": body}
+#         return {"status": "success", "output": {"cells": cells}}
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/new-notebook/")
-async def notebook_environment(notebook: Notebook, token: str = Depends(verify_token)):
-    notebook_data = handle_input(notebook)
-    folder_name = notebook_data.folder_name
-    file_name = notebook_data.file_name
-    notebook_content = notebook_data.notebook_data.content.dict()  # Convert to dictionary
+async def notebook_environment(notebook: dict = Body(...), token: str = Depends(verify_token)):
+    # Transform the request body
+    cells = [{"cell_type": "code", "source": cell.split('\n')} for cell in notebook['cells']]
+    notebook_data = {
+        "execute": notebook['execute'],
+        "file_name": notebook['file_name'],
+        "folder_name": notebook['folder_name'],
+        "notebook_data": {
+            "content": {
+                "cells": cells
+            }
+        }
+    }
+    # Convert the transformed request body into a Notebook instance
+    notebook = Notebook(**notebook_data)
+    folder_name = notebook.folder_name
+    file_name = notebook.file_name
+    notebook_content = notebook.notebook_data.content.dict()  # Convert to dictionary
 
     folder_name = f"/home/ubuntu/automatenb/environment/{folder_name}"
-    print(folder_name)
     os.makedirs(folder_name, exist_ok=True)
 
     notebook_path = os.path.join(folder_name, file_name)
-
-    # if check_if_file_exists(notebook_path):
-    #     return {"status": "error", "message": "File already exists"}
 
     try:
         # Convert the list of strings into a single string for each cell
@@ -317,13 +386,11 @@ async def notebook_environment(notebook: Notebook, token: str = Depends(verify_t
         # Write the notebook node to a file
         with open(notebook_path, 'w') as f:
             write(nb, f)
+        
         # Execute the notebook
         ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
         ep.preprocess(nb, {'metadata': {'path': folder_name}})
 
-        # Convert the executed notebook to HTML
-        # exporter = NotebookExporter()
-        # (body, resources) = exporter.from_notebook_node(nb)
         # Prepare cells for output
         cells = []
         for cell in nb.cells:
@@ -332,12 +399,9 @@ async def notebook_environment(notebook: Notebook, token: str = Depends(verify_t
                 "source": cell.source
             })
 
-        #return {"status": "success", "output": body}
         return {"status": "success", "output": {"cells": cells}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/delete-file")
 async def delete_file(input: DeleteFileInput, token: str = Depends(verify_token)):
     file_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
@@ -393,7 +457,7 @@ async def delete_folder(folder_name: FolderName, token: str = Depends(verify_tok
         return {"status": "error", "message": "Folder does not exist"}
 
 @app.post("/add-cell")
-async def add_cell(folder_name: str = Body(...), file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body(...), token: str = Depends(verify_token)):
+async def add_cell(folder_name: str = Body(...), file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body("code"), token: str = Depends(verify_token)):
     try:
         notebook_path = f"/home/ubuntu/automatenb/environment/{folder_name}/{file_name}"
         with open(notebook_path) as f:
