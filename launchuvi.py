@@ -470,8 +470,8 @@ async def add_cell(folder_name: str = Body(...), file_name: str = Body(...), cel
         else:
             return {"status": "error", "message": "Invalid cell type"}
 
-        nb.cells.append(new_cell)
         new_cell_index = len(nb.cells)
+        nb.cells.append(new_cell)
 
         with open(notebook_path, 'w') as f:
             write(nb, f)
