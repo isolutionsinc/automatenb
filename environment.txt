@@ -14,5 +14,6 @@ jupyterlab_server==2.25.2
 matplotlib-inline==0.1.6
 numpy==1.26.3
 pandas==2.2.0
+pyarrow==15.0.0
 pytest==7.4.4
 
