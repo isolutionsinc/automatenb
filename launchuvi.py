@@ -7,6 +7,8 @@ from nbformat.v4 import new_code_cell, new_markdown_cell
 from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
 from nbconvert import PythonExporter, NotebookExporter
 
+from traceback import format_exception
+
 from typing import Dict, List, Optional
 import json
 from dotenv import load_dotenv
@@ -17,6 +19,7 @@ import traceback
 import logging
 import sys
 import requests
+import re
 
 load_dotenv()
 
@@ -205,14 +208,30 @@ def execute_notebook(notebook_path, working_dir, cell_index):
     try:
         ep.preprocess(nb)
     except CellExecutionError as e:
+        # Remove the change_dir_cell after execution
+        nb.cells.pop(0)
+        # Get the output from the cell at cell_index
+        output = nb.cells[cell_index].outputs
+        cells = []
+        for cell in nb.cells:
+            processed_outputs = []
+            for output in cell.outputs:
+                if 'traceback' in output:
+                    output['traceback'] = [re.sub(r'\x1b\[.*?m', '', line) for line in output['traceback']]
+                processed_outputs.append(output)
+            cells.append({
+                "outputs": processed_outputs,
+                "source": cell.source
+            })
         tb_str = traceback.format_exc()
-        return {"status": "error", "message": "Error executing cell", "traceback": tb_str}
+        # Remove escape characters from traceback
+        tb_str = re.sub(r'\x1b\[.*?m', '', tb_str)
+        return {"status": "error", "message": "Error executing cell", "traceback": tb_str, "notebook": {"cells": cells}, "output": output}
 
     # Remove the change_dir_cell after execution
     nb.cells.pop(0)
 
     # Get the output from the cell at cell_index
-    #output = nb.cells[cell_index + 1].outputs
     output = nb.cells[cell_index].outputs
 
     # Prepare cells for output
@@ -240,116 +259,6 @@ async def execute(input: ExecuteNotebook, token: str = Depends(verify_token)):
         logging.error(f"Error executing cell: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# @app.post("/execute-cell-as-script")
-# async def execute_cell_as_script(input: ExecuteCellInput, token: str = Depends(verify_token)):
-#     try:
-#         folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
-#         notebook_path = f"{folder_path}/{input.file_name}"
-#         result = execute_notebook(notebook_path, folder_path, input.cell_index)
-#         if "status" in result and result["status"] == "error":
-#             return result
-
-#         # Convert the cell to a .py script
-#         exporter = PythonExporter()
-#         script, _ = exporter.from_notebook_node(result["notebook"])
-
-#         # Write the script to a .py file
-#         script_path = f"{folder_path}/cell_{input.cell_index}.py"
-#         print(script_path)
-#         with open(script_path, 'w') as f:
-#             f.write(script)
-
-#         # Execute the .py script and capture the output
-#         process = subprocess.run(["python3", script_path], capture_output=True, text=True)
-
-#         # Delete the .py script after execution
-#         os.remove(script_path)
-
-#         if process.returncode != 0:
-#             return {"status": "error", "message": process.stderr}
-#         else:
-#             return {"status": "success", "output": process.stdout}
-#     except Exception as e:
-#         logging.error(f"Error executing cell as script: {e}")
-#         raise HTTPException(status_code=500, detail=str(e))
-
-# @app.post("/replace-notebook")
-# async def write_notebook(input: ReplaceNotebookData, token: str = Depends(verify_token)):
-#     notebook_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
-#     if check_if_file_exists(notebook_path):
-#         try:
-#             # Convert the dictionary to a notebook object
-#             nb = from_dict(input.content)
-
-#             # Write the notebook node to a file
-#             with open(notebook_path, 'w') as f:
-#                 write(nb, f)
-
-#             return {"status": "success"}
-#         except Exception as e:
-#             raise HTTPException(status_code=500, detail=str(e))
-#     else:
-#         return {"status": "error", "message": "File does not exist"}
-
-# @app.post("/new-notebook/")
-# #async def notebook_environment(notebook: Notebook, token: str = Depends(verify_token)):
-# async def notebook_environment(notebook: Notebook, execute: bool = Body(...), token: str = Depends(verify_token)):
-#     # Transform the request body
-#     cells = [{"cell_type": "code", "source": cell.split('\n')} for cell in request['cells']]
-#     notebook_data = {
-#         "execute": request['execute'],
-#         "file_name": request['file_name'],
-#         "folder_name": request['folder_name'],
-#         "notebook_data": {
-#             "content": {
-#                 "cells": cells
-#             }
-#         }
-#     }
-#     # Convert the transformed request body into a Notebook instance
-#     notebook = Notebook(**notebook_data)
-#     notebook_data = handle_input(notebook)
-#     folder_name = notebook_data.folder_name
-#     file_name = notebook_data.file_name
-#     notebook_content = notebook_data.notebook_data.content.dict()  # Convert to dictionary
-
-#     folder_name = f"/home/ubuntu/automatenb/environment/{folder_name}"
-#     os.makedirs(folder_name, exist_ok=True)
-
-#     notebook_path = os.path.join(folder_name, file_name)
-
-#     # if check_if_file_exists(notebook_path):
-#     #     return {"status": "error", "message": "File already exists"}
-
-#     try:
-#         # Convert the list of strings into a single string for each cell
-#         for cell in notebook_content['cells']:
-#             cell['source'] = '\n'.join(cell['source'])
-#         # Convert the dictionary to a notebook object
-#         nb = from_dict(notebook_content)
-
-#         # Write the notebook node to a file
-#         with open(notebook_path, 'w') as f:
-#             write(nb, f)
-#         # Execute the notebook if execute is True
-#         # if execute: 
-#         #     ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
-#         #     ep.preprocess(nb, {'metadata': {'path': folder_name}})
-#         ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
-#         ep.preprocess(nb, {'metadata': {'path': folder_name}})
-
-#         # Prepare cells for output
-#         cells = []
-#         for cell in nb.cells:
-#             cells.append({
-#                 "outputs": cell.outputs,
-#                 "source": cell.source
-#             })
-
-#         #return {"status": "success", "output": body}
-#         return {"status": "success", "output": {"cells": cells}}
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/new-notebook/")
 async def notebook_environment(notebook: dict = Body(...), token: str = Depends(verify_token)):
@@ -387,21 +296,30 @@ async def notebook_environment(notebook: dict = Body(...), token: str = Depends(
         with open(notebook_path, 'w') as f:
             write(nb, f)
         
+        # # Execute the notebook
+        # ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+        # ep.preprocess(nb, {'metadata': {'path': folder_name}})
         # Execute the notebook
-        ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
-        ep.preprocess(nb, {'metadata': {'path': folder_name}})
+        result = execute_notebook(notebook_path, folder_name, 0)
 
+        # if result['status'] == 'error':
+        #     return result
+        if "status" in result and result["status"] == "error":
+            return result
         # Prepare cells for output
-        cells = []
-        for cell in nb.cells:
-            cells.append({
-                "outputs": cell.outputs,
-                "source": cell.source
-            })
+        # cells = []
+        # for cell in nb.cells:
+        #     cells.append({
+        #         "outputs": cell.outputs,
+        #         "source": cell.source
+        #     })
 
-        return {"status": "success", "output": {"cells": cells}}
+        #return {"status": "success", "output": {"cells": cells}} 
+        return {"notebook": result["notebook"], "output": result["output"]}      
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        #raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "error", "output": {"cells": cells}, "detail": str(e).replace("\x1b", " ")}
+
 @app.post("/delete-file")
 async def delete_file(input: DeleteFileInput, token: str = Depends(verify_token)):
     file_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}/{input.file_name}"
