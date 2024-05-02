@@ -31,7 +31,10 @@ from fastapi import HTTPException
 from starlette.status import HTTP_400_BAD_REQUEST
 
 from pydantic import BaseModel
-from typing import Any
+from typing import Any 
+
+import pandas as pd
+
 
 TOKEN = os.getenv("TOKEN")
 
@@ -259,6 +262,123 @@ async def execute(input: ExecuteNotebook, token: str = Depends(verify_token)):
         logging.error(f"Error executing cell: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+### Return as a postgresql
+from sqlalchemy import create_engine
+
+@app.post("/execute-notebook-pgsql")
+async def execute(input: ExecuteNotebook, token: str = Depends(verify_token)):
+    try:
+        folder_path = f"/home/ubuntu/automatenb/environment/{input.folder_name}"
+        notebook_path = f"{folder_path}/{input.file_name}"
+        cell_index = 0
+        result = execute_notebook(notebook_path, folder_path, cell_index)
+        if "status" in result and result["status"] == "error":
+            return result
+
+        # Create a connection to the database
+        engine = create_engine('postgres://postgres.tdolndvcxeugdykocfes:VAEF.Mnu4t*erFL@aws-0-us-west-1.pooler.supabase.com:5432/postgres')
+
+        # Convert the output to a dataframe
+        df = pd.DataFrame(result["output"])
+
+        # Write the dataframe to a table in the database
+        df.to_sql('list', engine, if_exists='replace')
+
+        return {"status": "success", "message": "Output written to PostgreSQL table 'my_table'"}
+    except Exception as e:
+        logging.error(f"Error executing cell: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/read-pgsql")
+async def read_pgsql(table_name: str = Query(...), token: str = Depends(oauth2_scheme)):
+    try:
+        engine = create_engine('postgresql://postgres.tdolndvcxeugdykocfes:VAEF.Mnu4t*erFL@aws-0-us-west-1.pooler.supabase.com:5432/postgres')
+        query = f"SELECT * FROM {table_name} LIMIT 25"
+        df = pd.read_sql_query(query, engine)
+        return {"status": "success", "data": df.to_dict(orient='records')}
+    except Exception as e:
+        logging.error(f"Error reading from table: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/update-pkl")
+async def read_pgsql(table_name: str = Query(...), token: str = Depends(oauth2_scheme)):
+    try:
+        engine = create_engine('postgresql://postgres.tdolndvcxeugdykocfes:VAEF.Mnu4t*erFL@aws-0-us-west-1.pooler.supabase.com:5432/postgres')
+        query = f"SELECT * FROM {table_name} LIMIT 25"
+        df = pd.read_sql_query(query, engine)
+
+        # Save the DataFrame to a pickle file
+        df.to_pickle('cache.pkl')
+
+        print(os.getcwd())
+        # Return the pickle file as a response
+        return FileResponse('cache.pkl', media_type='application/octet-stream')
+    except Exception as e:
+        logging.error(f"Error reading from table: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/read-pkl")
+async def read_pgsql(token: str = Depends(oauth2_scheme)):
+    try:
+        # Load the DataFrame from the pickle file
+        df = pd.read_pickle('cache.pkl')
+
+        # Convert the DataFrame to a dictionary
+        data = df.to_dict(orient='records')
+
+        return {"status": "success", "data": data}
+    except Exception as e:
+        logging.error(f"Error reading from pickle file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+import random
+import string
+
+@app.get("/modify-pgsql-pkl")
+async def modify_pgsql(token: str = Depends(oauth2_scheme)):
+    try:
+        # Load the DataFrame from the pickle file
+        df = pd.read_pickle('cache.pkl')
+
+        # Check if DataFrame is not empty
+        if not df.empty:
+            # Generate a random string of 2 capital letters for 'id'
+            random_id = ''.join(random.choices(string.ascii_uppercase, k=2))
+
+            # Generate a random string of 10 characters for 'value'
+            random_value = ''.join(random.choices(string.ascii_letters, k=10))
+
+            # Modify the first row
+            df.loc[0, 'id'] = random_id
+            df.loc[0, 'value'] = random_value
+
+            # Save the modified DataFrame to the pickle file
+            df.to_pickle('cache.pkl')
+
+        # Convert the DataFrame to a dictionary
+        data = df.to_dict(orient='records')
+
+        return {"status": "success", "data": data}
+    except Exception as e:
+        logging.error(f"Error modifying pickle file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/update-supabase")
+async def update_supabase(table_name: str = Body(...), token: str = Depends(oauth2_scheme)):
+    try:
+        # Load the DataFrame from the pickle file
+        df = pd.read_pickle('cache.pkl')
+
+        # Create a connection to the database
+        engine = create_engine('postgresql://postgres.tdolndvcxeugdykocfes:VAEF.Mnu4t*erFL@aws-0-us-west-1.pooler.supabase.com:5432/postgres')
+
+        # Write the DataFrame to a table in the database
+        df.to_sql(table_name, engine, if_exists='replace')
+
+        return {"status": "success", "message": f"Table '{table_name}' updated in Supabase"}
+    except Exception as e:
+        logging.error(f"Error updating Supabase table: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/new-notebook/")
 async def notebook_environment(notebook: dict = Body(...), token: str = Depends(verify_token)):
