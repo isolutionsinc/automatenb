@@ -659,6 +659,157 @@ async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post('/v1/tokens')
+async def count_tokens(request: Request):
+    data = await request.json()
+    if 'key' not in data:
+        raise HTTPException(status_code=404, detail="Key not found")
+    elif data['key'] != os.getenv('API_KEY'):
+        raise HTTPException(status_code=401, detail="Invalid Key")
+    text = data['messages']
+    tokenizer = get_tokenizer('daryl149/llama-2-7b-chat-hf')
+    # Tokenize the string
+    tokens = tokenizer.tokenize(text)
+    return {"token_count": len(tokens)}
+
+def parse_file(file_type, response):
+    # Parse file based on the file type
+    if file_type == "pdf":
+        pdf_file = BytesIO(response.content)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        text = "\n".join(
+            [pdf_reader.pages[i].extract_text() for i in range(len(pdf_reader.pages))]
+        )
+
+    elif file_type == "docx":
+        docx_file = BytesIO(response.content)
+        doc = Document(docx_file)
+        text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+
+    elif file_type == "txt":
+        text = response.text
+
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    return text
+
+
+def get_filename(file_url):
+    # Parse the URL and unquote to handle potentially encoded characters (like spaces as %20)
+    parsed_url = urlparse(file_url)
+    filename = os.path.basename(unquote(parsed_url.path))
+    return filename.split('.')[0]
+
+
+class InputModel(BaseModel):
+    url: str
+    chunk_size: int
+    chunk_overlap: int
+    return_full_text: Optional[bool] = False
+    model: Optional[str]
+
+
+MAX_CACHE_SIZE = 5  # Adjust depending on memory constraints
+model_cache = OrderedDict()  # To maintain the order of insertion for eviction
+
+def create_embeddings(input_texts, model_name):
+    # Check if model is in cache
+    if model_name in model_cache:
+        model = model_cache[model_name]
+        # Move the model to the end to show it's recently used
+        model_cache.move_to_end(model_name)
+    else:
+        # If not in cache, load and add to cache
+        model = SentenceTransformer(model_name, device="cuda")
+        if len(model_cache) >= MAX_CACHE_SIZE:
+            # Evict the least recently used model (first key in OrderedDict)
+            model_cache.popitem(last=False)
+        model_cache[model_name] = model
+
+    embeddings = model.encode(input_texts, normalize_embeddings=True)
+    embeddings = embeddings.tolist()
+    return embeddings
+
+@app.post("/v1/split-text")
+async def fetch_file(
+    request_data: InputModel,
+):
+    file_url = request_data.url
+    chunk_size = request_data.chunk_size
+    chunk_overlap = request_data.chunk_overlap
+    return_full_text = request_data.return_full_text
+    model = request_data.model
+    # Fetch the file
+    response = requests.get(file_url)
+    if response.status_code != 200:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Get file type from the URL
+    # Extracting Content-Type header
+    content_type = response.headers.get("Content-Type")
+
+    MIME_MAP = {
+        "application/pdf": "pdf",
+        "application/msword": "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "text/plain": "txt",
+    }
+
+    file_type = MIME_MAP.get(content_type, "unknown")
+
+    # Parse the file based on its type
+    try:
+        text = parse_file(file_type, response)
+
+        text_splitter = RecursiveCharacterTextSplitter(
+            # Set a really small chunk size, just to show.
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=len,
+            add_start_index=True,
+        )
+        documents = text_splitter.create_documents([text])
+
+        # Combine all page_content into a single string
+        whole_text = " ".join([doc.page_content for doc in documents])
+
+        # Create chunks list
+        if model is not None:
+            chunks = [
+                {
+                    "chunk": doc.page_content,
+                    "vector": create_embeddings(doc.page_content, model),
+                    "metadata": doc.metadata,
+                }
+                for doc in documents
+            ]
+        else:
+            chunks = [
+                {"chunk": doc.page_content, "metadata": doc.metadata}
+                for doc in documents
+            ]
+        # Final output structure
+        output = {
+            "metadata": {
+                "document_name": get_filename(file_url),
+                "mime_type": content_type,
+            },
+            "chunks": chunks,
+        }
+
+        if return_full_text:
+            output["text"] = whole_text
+
+        if model:
+            output["model"] = model
+
+        return JSONResponse(content=output, status_code=200)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/environment")
 async def get_file(token: str = Depends(verify_token)):
     return FileResponse('/home/ubuntu/automatenb/environment.txt')
