@@ -1,7 +1,8 @@
-from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile, Query, Depends, status, Form
+from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile, Query, Depends, status, Form, Request
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from nbformat import from_dict, write, read
 from nbformat.v4 import new_code_cell, new_markdown_cell
 from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
@@ -9,7 +10,7 @@ from nbconvert import PythonExporter, NotebookExporter
 
 from traceback import format_exception
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 import json
 from dotenv import load_dotenv
 import os
@@ -38,6 +39,23 @@ import pandas as pd
 import urllib
 
 from urllib.parse import quote_plus
+
+from collections import OrderedDict
+
+from io import BytesIO
+from docx import Document
+from striprtf.striprtf import rtf_to_text
+
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from sentence_transformers import SentenceTransformer
+from pydantic import BaseModel
+from typing import Optional
+from urllib.parse import urlparse
+from urllib.parse import unquote
+import PyPDF2
+
+from langchain.document_loaders import YoutubeLoader
+# rest of your code
 
 psqlpass = os.getenv("PSQLPASS")
 psqlpass = urllib.parse.quote_plus(psqlpass)
@@ -133,6 +151,30 @@ class FileName(BaseModel):
 class UploadFileInput(BaseModel):
     folder_path: str
 
+class Chunks(BaseModel):
+    chunk_size: int
+    chunk_overlap: int
+
+# class InputModel(BaseModel):
+#     text: str
+#     chunks: Chunks
+#     return_full_text: bool
+#     type: str
+#     model: Optional[str] = None
+class InputModel(BaseModel):
+    text: Optional[str] = None
+    url: Optional[str] = None
+    type: str
+    chunks: Chunks
+    return_full_text: Optional[bool] = False
+    model: Optional[str] = None
+
+class InputModelURL(BaseModel):
+    url: str
+    chunks: Chunks
+    return_full_text: bool = True
+    type: str
+    model: Optional[str] = None
 
 url = os.getenv('SUPABASE_URL')
 key = os.getenv('SUPABASE_KEY')
@@ -446,6 +488,54 @@ async def update_supabase(table_name: str = Body(...), token: str = Depends(oaut
         logging.error(f"Error updating Supabase table: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# @app.post("/new-notebook")
+# async def notebook_environment(notebook: dict = Body(...), file_name: str = Body(...), token: str = Depends(verify_token)):
+#     # Transform the request body
+#     cells = [{"cell_type": "code", "source": cell.split('\n')} for cell in notebook['cells']]
+#     notebook_data = {
+#         "execute": notebook['execute'],
+#         "file_name": file_name,
+#         "notebook_data": {
+#             "content": {
+#                 "cells": cells
+#             }
+#         }
+#     }
+#     # Convert the transformed request body into a Notebook instance
+#     notebook = Notebook(**notebook_data)
+#     folder_name = f"{workspace_path}"
+#     notebook_content = notebook.notebook_data.content.dict()  # Convert to dictionary
+
+#     # Extract the directory from the file_name
+#     directory = os.path.join(workspace_path, os.path.dirname(file_name))
+
+#     # Create the directory if it does not exist
+#     if not os.path.exists(directory):
+#         os.makedirs(directory)
+
+#     notebook_path = os.path.join(folder_name, file_name)
+
+#     try:
+#         # Convert the list of strings into a single string for each cell
+#         for cell in notebook_content['cells']:
+#             cell['source'] = '\n'.join(cell['source'])
+#         # Convert the dictionary to a notebook object
+#         nb = from_dict(notebook_content)
+
+#         # Write the notebook node to a file
+#         with open(notebook_path, 'w') as f:
+#             write(nb, f)
+        
+#         # Execute the notebook
+#         result = execute_notebook(notebook_path, folder_name, 0)
+
+#         if "status" in result and result["status"] == "error":
+#             return result
+
+#         return {"notebook": result["notebook"], "output": result["output"]}      
+#     except Exception as e:
+#         return {"status": "error", "output": {"cells": cells}, "detail": str(e).replace("\x1b", " ")}
+
 @app.post("/new-notebook")
 async def notebook_environment(notebook: dict = Body(...), file_name: str = Body(...), token: str = Depends(verify_token)):
     # Transform the request body
@@ -488,9 +578,18 @@ async def notebook_environment(notebook: dict = Body(...), file_name: str = Body
         result = execute_notebook(notebook_path, folder_name, 0)
 
         if "status" in result and result["status"] == "error":
-            return result
+            # Ensure that "output" is an array
+            output = result["output"]
+            if not isinstance(output, list):
+                output = [output]
+            return {"status": "error", "notebook": result["notebook"], "output": output}
 
-        return {"notebook": result["notebook"], "output": result["output"]}      
+        # Ensure that "output" is an array
+        output = result["output"]
+        if not isinstance(output, list):
+            output = [output]
+
+        return {"notebook": result["notebook"], "output": output}      
     except Exception as e:
         return {"status": "error", "output": {"cells": cells}, "detail": str(e).replace("\x1b", " ")}
 
@@ -682,9 +781,13 @@ def parse_file(file_type, response):
         )
 
     elif file_type == "docx":
-        docx_file = BytesIO(response.content)
-        doc = Document(docx_file)
+        doc_file = BytesIO(response.content)
+        doc = Document(doc_file)
         text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+
+    elif file_type == "rtf":
+        text = rtf_to_text(response.content.decode())
+
 
     elif file_type == "txt":
         text = response.text
@@ -702,14 +805,6 @@ def get_filename(file_url):
     return filename.split('.')[0]
 
 
-class InputModel(BaseModel):
-    url: str
-    chunk_size: int
-    chunk_overlap: int
-    return_full_text: Optional[bool] = False
-    model: Optional[str]
-
-
 MAX_CACHE_SIZE = 5  # Adjust depending on memory constraints
 model_cache = OrderedDict()  # To maintain the order of insertion for eviction
 
@@ -721,7 +816,8 @@ def create_embeddings(input_texts, model_name):
         model_cache.move_to_end(model_name)
     else:
         # If not in cache, load and add to cache
-        model = SentenceTransformer(model_name, device="cuda")
+        #model = SentenceTransformer(model_name, device="cuda")
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5")
         if len(model_cache) >= MAX_CACHE_SIZE:
             # Evict the least recently used model (first key in OrderedDict)
             model_cache.popitem(last=False)
@@ -731,83 +827,220 @@ def create_embeddings(input_texts, model_name):
     embeddings = embeddings.tolist()
     return embeddings
 
+models_cache = OrderedDict()
+
+
+def parse_youtube_transcript(url):
+    loader = YoutubeLoader.from_youtube_url(url, add_video_info=True)
+    res = loader.load()
+    return res[0]
+
+# @app.post("/v1/split-text")
+# async def process_text(
+#     request_data: Union[InputModel, InputModelURL],
+#     file: Optional[UploadFile] = None
+# ):
+#     chunk_size = request_data.chunks.chunk_size
+#     chunk_overlap = request_data.chunks.chunk_overlap
+#     return_full_text = request_data.return_full_text
+#     model = request_data.model
+
+#     file_type = None
+
+#     if isinstance(request_data, InputModelURL) and request_data.type == "file":
+#         # Handle file URL
+#         file_url = request_data.url
+#         # Fetch the file
+#         response = requests.get(file_url)
+#         if response.status_code != 200:
+#             raise HTTPException(status_code=404, detail="File not found")
+
+#         # Get file type from the URL
+#         content_type = response.headers.get("Content-Type")
+#         MIME_MAP = {
+#             "application/pdf": "pdf",
+#             "application/msword": "doc",
+#             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+#             "text/plain": "txt",
+#             "application/rtf": "rtf",
+#         }
+#         file_type = MIME_MAP.get(content_type, "unknown")
+#         # Parse the file based on its type
+#         text = parse_file(file_type, response)
+        
+#     elif file:
+#         # Handle file upload
+#         contents = await file.read()
+#         text = contents.decode()  # assuming the file is text-based
+
+#     elif file_type == "youtube_transcript":
+#         youtube_text = parse_youtube_transcript(file_url)
+#         youtube_metadata = youtube_text.metadata
+#         parsed_text = youtube_text.page_content
+        
+#     else:
+#         # Handle plain text
+#         text = request_data.text
+
+#     text_splitter = RecursiveCharacterTextSplitter(
+#         chunk_size=chunk_size,
+#         chunk_overlap=chunk_overlap,
+#         length_function=len,
+#         add_start_index=True,
+#     )
+#     documents = text_splitter.create_documents([text])
+
+#     # Combine all page_content into a single string
+#     whole_text = " ".join([doc.page_content for doc in documents])
+
+#     # Create chunks list
+#     if model is not None:
+#         chunks = [
+#             {
+#                 "chunk": doc.page_content,
+#                 "vector": create_embeddings(doc.page_content, model),
+#                 "metadata": doc.metadata,
+#             }
+#             for doc in documents
+#         ]
+#     else:
+#         chunks = [
+#             {"chunk": doc.page_content, "metadata": doc.metadata}
+#             for doc in documents
+#         ]
+#     # Final output structure
+#     output = {
+#         "metadata": {
+#             "document_name": "input_text",
+#             "mime_type": "text/plain",
+#         },
+#         "chunks": chunks,
+#     }
+
+#     if return_full_text:
+#         output["text"] = whole_text
+
+#     if model:
+#         output["model"] = model
+
+#     return JSONResponse(content=output, status_code=200)
+
 @app.post("/v1/split-text")
-async def fetch_file(
-    request_data: InputModel,
-):
-    file_url = request_data.url
-    chunk_size = request_data.chunk_size
-    chunk_overlap = request_data.chunk_overlap
+async def process_text(request_data: InputModel):
+    chunk_size = request_data.chunks.chunk_size
+    chunk_overlap = request_data.chunks.chunk_overlap
     return_full_text = request_data.return_full_text
     model = request_data.model
-    # Fetch the file
-    response = requests.get(file_url)
-    if response.status_code != 200:
-        raise HTTPException(status_code=404, detail="File not found")
+    input_type = request_data.type
 
-    # Get file type from the URL
-    # Extracting Content-Type header
-    content_type = response.headers.get("Content-Type")
+    if input_type == "file":
+        # Handle file URL
+        file_url = request_data.url
+        # Fetch the file
+        response = requests.get(file_url)
+        if response.status_code != 200:
+            raise HTTPException(status_code=404, detail="File not found")
 
-    MIME_MAP = {
-        "application/pdf": "pdf",
-        "application/msword": "doc",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-        "text/plain": "txt",
-    }
+        # Get file type from the URL
+        content_type = response.headers.get("Content-Type")
+        MIME_MAP = {
+            "application/pdf": "pdf",
+            "application/msword": "doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+            "text/plain": "txt",
+            "application/rtf": "rtf",
+        }
+        file_type = MIME_MAP.get(content_type, "unknown")
 
-    file_type = MIME_MAP.get(content_type, "unknown")
-
-    # Parse the file based on its type
-    try:
+        # Parse the file based on its type
         text = parse_file(file_type, response)
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            # Set a really small chunk size, just to show.
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            length_function=len,
-            add_start_index=True,
-        )
-        documents = text_splitter.create_documents([text])
+    elif input_type == "youtube_transcript":
+        youtube_text = parse_youtube_transcript(request_data.url)
+        youtube_metadata = youtube_text.metadata
+        text = youtube_text.page_content
 
-        # Combine all page_content into a single string
-        whole_text = " ".join([doc.page_content for doc in documents])
+    elif input_type == "text":
+        # Handle plain text
+        text = request_data.text
 
-        # Create chunks list
-        if model is not None:
-            chunks = [
-                {
-                    "chunk": doc.page_content,
-                    "vector": create_embeddings(doc.page_content, model),
-                    "metadata": doc.metadata,
-                }
-                for doc in documents
-            ]
-        else:
-            chunks = [
-                {"chunk": doc.page_content, "metadata": doc.metadata}
-                for doc in documents
-            ]
-        # Final output structure
-        output = {
-            "metadata": {
-                "document_name": get_filename(file_url),
-                "mime_type": content_type,
-            },
-            "chunks": chunks,
-        }
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported input type")
 
-        if return_full_text:
-            output["text"] = whole_text
 
-        if model:
-            output["model"] = model
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,
+        add_start_index=True,
+    )
+    documents = text_splitter.create_documents([text])
 
-        return JSONResponse(content=output, status_code=200)
+    # Combine all page_content into a single string
+    whole_text = " ".join([doc.page_content for doc in documents])
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Create chunks list
+    if model is not None:
+        chunks = [
+            {
+                "chunk": doc.page_content,
+                "vector": create_embeddings(doc.page_content, model),
+                "metadata": doc.metadata,
+            }
+            for doc in documents
+        ]
+    else:
+        chunks = [
+            {"chunk": doc.page_content, "metadata": doc.metadata}
+            for doc in documents
+        ]
+    # Final output structure
+    output = {
+        "metadata": {
+            "document_name": "input_text",
+            "mime_type": "text/plain",
+        },
+        "chunks": chunks,
+    }
+
+    if return_full_text:
+        output["text"] = whole_text
+
+    if model:
+        output["model"] = model
+
+    return JSONResponse(content=output, status_code=200)
+
+@app.post('/v1/embeddings')
+async def get_embeddings(request: Request):
+    data = await request.json()
+    model_name = data['model']
+    input_texts = data['input']
+
+    # Check if model is in cache
+    if model_name in models_cache:
+        model = models_cache[model_name]
+        # Move the model to the end to show it's recently used
+        models_cache.move_to_end(model_name)
+    else:
+        # If not in cache, load and add to cache
+        #model = SentenceTransformer(model_name, device='cuda')
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        if len(models_cache) >= MAX_CACHE_SIZE:
+            # Evict the least recently used model (first key in OrderedDict)
+            models_cache.popitem(last=False)
+        models_cache[model_name] = model
+
+    embeddings = model.encode(input_texts, normalize_embeddings=True)
+    embeddings = embeddings.tolist()
+    return {
+        "data": [
+            {
+                "embedding": embeddings
+            }
+        ],
+        "model": model_name
+    }
 
 
 @app.get("/environment")
