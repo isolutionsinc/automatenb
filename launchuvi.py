@@ -54,8 +54,11 @@ from urllib.parse import urlparse
 from urllib.parse import unquote
 import PyPDF2
 
-from langchain.document_loaders import YoutubeLoader
-# rest of your code
+#from langchain.document_loaders import YoutubeLoader
+from langchain_community.document_loaders import YoutubeLoader
+
+import ast
+from  RestrictedPython import compile_restricted
 
 psqlpass = os.getenv("PSQLPASS")
 psqlpass = urllib.parse.quote_plus(psqlpass)
@@ -305,12 +308,117 @@ def execute_notebook(notebook_path, working_dir, cell_index):
     #return {"notebook": nb, "output": output}
     return {"notebook": {"cells": cells}, "output": output}
 
+
+def safety_check(python_code: str) -> dict[str, object]:
+    """Check if Python code is safe to execute.
+    This function uses common patterns and RestrictedPython to check for unsafe patterns in the code.
+
+    Args:
+        python_code: Python code to check
+    Returns:
+        Dictionary with "safe" (bool) and "message" (str) keys
+    """
+    result = {"safe": True, "message": "The code is safe to execute."}
+
+    # Crude check for problematic code (os, sys, subprocess, exec, eval, etc.)
+    unsafe_modules = {"os", "sys", "subprocess", "builtins"}
+    unsafe_functions = {
+        "exec",
+        "eval",
+        "compile",
+        "open",
+        "input",
+        "__import__",
+        "getattr",
+        "setattr",
+        "delattr",
+        "hasattr",
+    }
+    dangerous_builtins = {
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "eval",
+        "exec",
+        "compile",
+    }
+    # this a crude check first - no need to compile the code if it's obviously unsafe. Performance boost.
+    try:
+        tree = ast.parse(python_code)
+    except SyntaxError as e:
+        return {"safe": False, "message": f"Syntax error: {str(e)}"}
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in dangerous_builtins
+        ):
+            return {
+                "safe": False,
+                "message": f"Use of dangerous built-in function: {node.func.id}",
+            }
+        # Check for unsafe imports
+        if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
+            module_name = node.module if isinstance(node, ast.ImportFrom) else None
+            for alias in node.names:
+                if module_name and module_name.split(".")[0] in unsafe_modules:
+                    return {
+                        "safe": False,
+                        "message": f"Unsafe module import: {module_name}",
+                    }
+                if alias.name.split(".")[0] in unsafe_modules:
+                    return {
+                        "safe": False,
+                        "message": f"Unsafe module import: {alias.name}",
+                    }
+        # Check for unsafe function calls
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in unsafe_functions:
+                return {
+                    "safe": False,
+                    "message": f"Unsafe function call: {node.func.id}",
+                }
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in unsafe_functions
+            ):
+                return {
+                    "safe": False,
+                    "message": f"Unsafe function call: {node.func.attr}",
+                }
+
+    try:
+        # Compile the code using RestrictedPython with a filename indicating its dynamic nature
+        compiled_code = compile_restricted(
+            python_code, filename="<dynamic>", mode="exec"
+        )
+        # Note: Execution step is omitted to only check the code without running it
+        # This is not perfect, but should catch most unsafe patterns
+    except Exception as e:
+        return {
+            "safe": False,
+            "message": f"RestrictedPython detected an unsafe pattern: {str(e)}",
+        }
+
+    return result
+
 @app.post("/execute-notebook")
-async def execute(input: ExecuteNotebookInput, token: str = Depends(verify_token)):
+async def execute(notebook_name: str = Body(...), safety_check_flag: bool = Body(True), token: str = Depends(verify_token)):
     try:
         folder_path = f"{workspace_path}"
-        notebook_path = f"{folder_path}/{input.notebook_name}"
+        notebook_path = f"{folder_path}/{notebook_name}"
         cell_index = 0
+        # Load the notebook and perform a safety check on each cell if the flag is set
+        if safety_check_flag:
+            with open(notebook_path) as f:
+                nb = read(f, as_version=4)
+            for cell in nb.cells:
+                if cell.cell_type == 'code':
+                    check_result = safety_check(cell.source)
+                    if not check_result['safe']:
+                        return {"status": "error", "message": check_result['message']}
         result = execute_notebook(notebook_path, folder_path, cell_index)
         if "status" in result and result["status"] == "error":
             return result
@@ -648,8 +756,15 @@ async def delete_folder(folder_name: FolderName, token: str = Depends(verify_tok
         return {"status": "error", "message": "Folder does not exist"}
 
 @app.post("/add-cell")
-async def add_cell(file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body("code"), token: str = Depends(verify_token)):
+async def add_cell(file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body("code"), safety_check_flag: bool = Body(True), token: str = Depends(verify_token)):
     try:
+        # Check if the code is safe to execute
+        if safety_check_flag:
+            check_result = safety_check(cell_content)
+            if not check_result['safe']:
+                return {"status": "error", "message": check_result['message']}
+
+
         notebook_path = f"{workspace_path}/{file_name}"
         with open(notebook_path) as f:
             nb = read(f, as_version=4)
@@ -669,11 +784,18 @@ async def add_cell(file_name: str = Body(...), cell_content: str = Body(...), ce
 
         return {"status": "success", "cell_index": new_cell_index}
     except Exception as e:
+        logging.error(f"Error updating cell: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/update-cell")
-async def update_cell(input: UpdateCellInput, token: str = Depends(verify_token)):
+async def update_cell(input: UpdateCellInput, safety_check_flag: bool = Body(True), token: str = Depends(verify_token)):
     try:
+        # Check if the code is safe to execute
+        if safety_check_flag:
+            check_result = safety_check(input.cell_content)
+            if not check_result['safe']:
+                return {"status": "error", "message": check_result['message']}
+
         notebook_path = f"{workspace_path}/{input.file_name}"
         with open(notebook_path) as f:
             nb = read(f, as_version=4)
@@ -695,6 +817,7 @@ async def update_cell(input: UpdateCellInput, token: str = Depends(verify_token)
 
         return {"status": "success"}
     except Exception as e:
+        logging.error(f"Error updating cell: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/delete-cell")
