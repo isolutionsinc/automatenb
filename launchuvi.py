@@ -54,6 +54,9 @@ from urllib.parse import urlparse
 from urllib.parse import unquote
 import PyPDF2
 
+import uuid
+from datetime import datetime
+
 #from langchain.document_loaders import YoutubeLoader
 from langchain_community.document_loaders import YoutubeLoader
 
@@ -258,6 +261,8 @@ async def read_notebook(file_name: FileName = Body(...), token: str = Depends(ve
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
 def execute_notebook(notebook_path, working_dir, cell_index):
     with open(notebook_path) as f:
         nb = read(f, as_version=4)
@@ -281,6 +286,8 @@ def execute_notebook(notebook_path, working_dir, cell_index):
             for output in cell.outputs:
                 if 'traceback' in output:
                     output['traceback'] = [re.sub(r'\x1b\[.*?m', '', line) for line in output['traceback']]
+                if output['output_type'] == 'display_data' and 'image/png' in output['data']:
+                    del output['data']['image/png']
                 processed_outputs.append(output)
             cells.append({
                 "outputs": processed_outputs,
@@ -300,12 +307,16 @@ def execute_notebook(notebook_path, working_dir, cell_index):
     # Prepare cells for output
     cells = []
     for cell in nb.cells:
+        processed_outputs = []
+        for output in cell.outputs:
+            if output['output_type'] == 'display_data' and 'image/png' in output['data']:
+                del output['data']['image/png']
+            processed_outputs.append(output)
         cells.append({
-            "outputs": cell.outputs,
+            "outputs": processed_outputs,
             "source": cell.source
         })
 
-    #return {"notebook": nb, "output": output}
     return {"notebook": {"cells": cells}, "output": output}
 
 
@@ -405,7 +416,7 @@ def safety_check(python_code: str) -> dict[str, object]:
     return result
 
 @app.post("/execute-notebook")
-async def execute(notebook_name: str = Body(...), safety_check_flag: bool = Body(True), token: str = Depends(verify_token)):
+async def execute(notebook_name: str = Body(...), safety_check_flag: bool = Body(False), token: str = Depends(verify_token)):
     try:
         folder_path = f"{workspace_path}"
         notebook_path = f"{folder_path}/{notebook_name}"
@@ -596,56 +607,9 @@ async def update_supabase(table_name: str = Body(...), token: str = Depends(oaut
         logging.error(f"Error updating Supabase table: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# @app.post("/new-notebook")
-# async def notebook_environment(notebook: dict = Body(...), file_name: str = Body(...), token: str = Depends(verify_token)):
-#     # Transform the request body
-#     cells = [{"cell_type": "code", "source": cell.split('\n')} for cell in notebook['cells']]
-#     notebook_data = {
-#         "execute": notebook['execute'],
-#         "file_name": file_name,
-#         "notebook_data": {
-#             "content": {
-#                 "cells": cells
-#             }
-#         }
-#     }
-#     # Convert the transformed request body into a Notebook instance
-#     notebook = Notebook(**notebook_data)
-#     folder_name = f"{workspace_path}"
-#     notebook_content = notebook.notebook_data.content.dict()  # Convert to dictionary
-
-#     # Extract the directory from the file_name
-#     directory = os.path.join(workspace_path, os.path.dirname(file_name))
-
-#     # Create the directory if it does not exist
-#     if not os.path.exists(directory):
-#         os.makedirs(directory)
-
-#     notebook_path = os.path.join(folder_name, file_name)
-
-#     try:
-#         # Convert the list of strings into a single string for each cell
-#         for cell in notebook_content['cells']:
-#             cell['source'] = '\n'.join(cell['source'])
-#         # Convert the dictionary to a notebook object
-#         nb = from_dict(notebook_content)
-
-#         # Write the notebook node to a file
-#         with open(notebook_path, 'w') as f:
-#             write(nb, f)
-        
-#         # Execute the notebook
-#         result = execute_notebook(notebook_path, folder_name, 0)
-
-#         if "status" in result and result["status"] == "error":
-#             return result
-
-#         return {"notebook": result["notebook"], "output": result["output"]}      
-#     except Exception as e:
-#         return {"status": "error", "output": {"cells": cells}, "detail": str(e).replace("\x1b", " ")}
 
 @app.post("/new-notebook")
-async def notebook_environment(notebook: dict = Body(...), file_name: str = Body(...), token: str = Depends(verify_token)):
+async def notebook_environment(notebook: dict = Body(...), file_name: str = Body(...), safety_check_flag: bool = Body(False), token: str = Depends(verify_token)):
     # Transform the request body
     cells = [{"cell_type": "code", "source": cell.split('\n')} for cell in notebook['cells']]
     notebook_data = {
@@ -681,7 +645,14 @@ async def notebook_environment(notebook: dict = Body(...), file_name: str = Body
         # Write the notebook node to a file
         with open(notebook_path, 'w') as f:
             write(nb, f)
-        
+
+        # Perform a safety check on each cell
+        for cell in nb.cells:
+            if cell.cell_type == 'code'and safety_check_flag:
+                check_result = safety_check(cell.source)
+                if not check_result['safe']:
+                    return {"status": "error", "message": check_result['message']}
+                
         # Execute the notebook
         result = execute_notebook(notebook_path, folder_name, 0)
 
@@ -700,6 +671,7 @@ async def notebook_environment(notebook: dict = Body(...), file_name: str = Body
         return {"notebook": result["notebook"], "output": output}      
     except Exception as e:
         return {"status": "error", "output": {"cells": cells}, "detail": str(e).replace("\x1b", " ")}
+
 
 @app.post("/delete-file")
 async def delete_file(input: DeleteFileInput, token: str = Depends(verify_token)):
@@ -756,7 +728,7 @@ async def delete_folder(folder_name: FolderName, token: str = Depends(verify_tok
         return {"status": "error", "message": "Folder does not exist"}
 
 @app.post("/add-cell")
-async def add_cell(file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body("code"), safety_check_flag: bool = Body(True), token: str = Depends(verify_token)):
+async def add_cell(file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body("code"), safety_check_flag: bool = Body(False), token: str = Depends(verify_token)):
     try:
         # Check if the code is safe to execute
         if safety_check_flag:
@@ -788,7 +760,7 @@ async def add_cell(file_name: str = Body(...), cell_content: str = Body(...), ce
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/update-cell")
-async def update_cell(input: UpdateCellInput, safety_check_flag: bool = Body(True), token: str = Depends(verify_token)):
+async def update_cell(input: UpdateCellInput, safety_check_flag: bool = Body(False), token: str = Depends(verify_token)):
     try:
         # Check if the code is safe to execute
         if safety_check_flag:
@@ -958,95 +930,6 @@ def parse_youtube_transcript(url):
     res = loader.load()
     return res[0]
 
-# @app.post("/v1/split-text")
-# async def process_text(
-#     request_data: Union[InputModel, InputModelURL],
-#     file: Optional[UploadFile] = None
-# ):
-#     chunk_size = request_data.chunks.chunk_size
-#     chunk_overlap = request_data.chunks.chunk_overlap
-#     return_full_text = request_data.return_full_text
-#     model = request_data.model
-
-#     file_type = None
-
-#     if isinstance(request_data, InputModelURL) and request_data.type == "file":
-#         # Handle file URL
-#         file_url = request_data.url
-#         # Fetch the file
-#         response = requests.get(file_url)
-#         if response.status_code != 200:
-#             raise HTTPException(status_code=404, detail="File not found")
-
-#         # Get file type from the URL
-#         content_type = response.headers.get("Content-Type")
-#         MIME_MAP = {
-#             "application/pdf": "pdf",
-#             "application/msword": "doc",
-#             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-#             "text/plain": "txt",
-#             "application/rtf": "rtf",
-#         }
-#         file_type = MIME_MAP.get(content_type, "unknown")
-#         # Parse the file based on its type
-#         text = parse_file(file_type, response)
-        
-#     elif file:
-#         # Handle file upload
-#         contents = await file.read()
-#         text = contents.decode()  # assuming the file is text-based
-
-#     elif file_type == "youtube_transcript":
-#         youtube_text = parse_youtube_transcript(file_url)
-#         youtube_metadata = youtube_text.metadata
-#         parsed_text = youtube_text.page_content
-        
-#     else:
-#         # Handle plain text
-#         text = request_data.text
-
-#     text_splitter = RecursiveCharacterTextSplitter(
-#         chunk_size=chunk_size,
-#         chunk_overlap=chunk_overlap,
-#         length_function=len,
-#         add_start_index=True,
-#     )
-#     documents = text_splitter.create_documents([text])
-
-#     # Combine all page_content into a single string
-#     whole_text = " ".join([doc.page_content for doc in documents])
-
-#     # Create chunks list
-#     if model is not None:
-#         chunks = [
-#             {
-#                 "chunk": doc.page_content,
-#                 "vector": create_embeddings(doc.page_content, model),
-#                 "metadata": doc.metadata,
-#             }
-#             for doc in documents
-#         ]
-#     else:
-#         chunks = [
-#             {"chunk": doc.page_content, "metadata": doc.metadata}
-#             for doc in documents
-#         ]
-#     # Final output structure
-#     output = {
-#         "metadata": {
-#             "document_name": "input_text",
-#             "mime_type": "text/plain",
-#         },
-#         "chunks": chunks,
-#     }
-
-#     if return_full_text:
-#         output["text"] = whole_text
-
-#     if model:
-#         output["model"] = model
-
-#     return JSONResponse(content=output, status_code=200)
 
 @app.post("/v1/split-text")
 async def process_text(request_data: InputModel):
@@ -1089,7 +972,12 @@ async def process_text(request_data: InputModel):
 
     else:
         raise HTTPException(status_code=400, detail="Unsupported input type")
+    
+    # Filter out Unicode escape characters
+    text = re.sub(r'\\u[0-9A-Fa-f]{1,4}', '', text)
 
+    # Remove null characters
+    text = text.replace('\u0000', '')
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
@@ -1165,6 +1053,17 @@ async def get_embeddings(request: Request):
         "model": model_name
     }
 
+@app.post("/transcribe")
+async def transcribe(s3_file: str = Body(...), type_file: str = Body(...)):
+    try:
+        current_date = datetime.now().strftime("%d%m%Y")
+        short_id = str(uuid.uuid4())[:8]
+        output_filename = short_id + "_" + current_date
+        s3_location = f"s3://townhallmeeting/{s3_file}.{type_file}"
+        result = subprocess.run(["python3", "/home/ubuntu/transcribe/transcribe.py", output_filename, s3_location, type_file], capture_output=True, text=True, check=True)
+        return {"status": result.stdout.strip(), "output": output_filename}
+    except subprocess.CalledProcessError as e:
+        return {"status": "error", "output": e.output, "error": e.stderr}
 
 @app.get("/environment")
 async def get_file(token: str = Depends(verify_token)):
