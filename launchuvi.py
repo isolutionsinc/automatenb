@@ -998,101 +998,8 @@ async def process_text(request_data: InputModel):
         output["model"] = model
 
     return JSONResponse(content=output, status_code=200)
-# @app.post("/v1/split-text")
-# async def process_text(request_data: InputModel):
-#     chunk_size = request_data.chunks.chunk_size
-#     chunk_overlap = request_data.chunks.chunk_overlap
-#     return_full_text = request_data.return_full_text
-#     model = request_data.model
-#     input_type = request_data.type
 
-#     if input_type == "file":
-#         # Handle file URL
-#         file_url = request_data.url
-#         # Fetch the file
-#         response = requests.get(file_url)
-#         if response.status_code != 200:
-#             raise HTTPException(status_code=404, detail="File not found")
-
-#         # Get file type from the URL
-#         content_type = response.headers.get("Content-Type")
-#         MIME_MAP = {
-#             "application/pdf": "pdf",
-#             "application/msword": "doc",
-#             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-#             "text/plain": "txt",
-#             "application/rtf": "rtf",
-#         }
-#         file_type = MIME_MAP.get(content_type, "unknown")
-
-#         # Parse the file based on its type
-#         text, page_numbers = await parse_file(file_type, response)
-
-#     elif input_type == "youtube_transcript":
-#         youtube_text = parse_youtube_transcript(request_data.url)
-#         youtube_metadata = youtube_text.metadata
-#         text = youtube_text.page_content
-#         page_numbers = None  # No page numbers for YouTube transcripts
-
-#     elif input_type == "text":
-#         # Handle plain text
-#         text = request_data.text
-#         page_numbers = None  # No page numbers for plain text
-
-#     else:
-#         raise HTTPException(status_code=400, detail="Unsupported input type")
     
-#     # Filter out Unicode escape characters
-#     text = re.sub(r'\\u[0-9A-Fa-f]{1,4}', '', text)
-
-#     # Remove null characters
-#     text = text.replace('\u0000', '')
-
-#     text_splitter = RecursiveCharacterTextSplitter(
-#         chunk_size=chunk_size,
-#         chunk_overlap=chunk_overlap,
-#         length_function=len,
-#         add_start_index=True,
-#     )
-#     documents = text_splitter.create_documents([text])
-
-#     # Combine all page_content into a single string
-#     whole_text = " ".join([doc.page_content for doc in documents])
-
-#     # Create chunks list
-#     if model is not None:
-#         chunks = [
-#             {
-#                 "chunk": doc.page_content,
-#                 "vector": create_embeddings(doc.page_content, model),
-#                 "metadata": {**doc.metadata, "page_number": get_page_number(doc.metadata['start_index'], page_numbers)},
-#             }
-#             for doc in documents
-#         ]
-#     else:
-#         chunks = [
-#             {
-#                 "chunk": doc.page_content,
-#                 "metadata": {**doc.metadata, "page_number": get_page_number(doc.metadata['start_index'], page_numbers)},
-#             }
-#             for doc in documents
-#         ]
-#     # Final output structure
-#     output = {
-#         "metadata": {
-#             "document_name": "input_text",
-#             "mime_type": "text/plain",
-#         },
-#         "chunks": chunks,
-#     }
-
-#     if return_full_text:
-#         output["text"] = whole_text
-
-#     if model:
-#         output["model"] = model
-
-#     return JSONResponse(content=output, status_code=200)
 def parse_file(file_type, response):
     # Parse file based on the file type
     if file_type == "pdf":
@@ -1118,43 +1025,68 @@ def parse_file(file_type, response):
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
     return text
-# async def parse_file(file_type, response):
-#     if file_type == "pdf":
-#         pdf_file = BytesIO(response.content)
-#         text = ""
-#         page_numbers = []
-#         pdf_reader = PyPDF2.PdfReader(pdf_file)
-#         for page_number, page in enumerate(pdf_reader.pages, start=1):
-#             page_text = page.extract_text()
-#             text += page_text + "\n"
-#             page_numbers.extend([page_number] * len(page_text.split()))  # Track page numbers by word count
-#         return text, page_numbers
-#     elif file_type == "docx":
-#         doc_file = BytesIO(response.content)
-#         doc = Document(doc_file)
-#         text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-#         return text, None  # No page numbers for DOCX
 
-#     elif file_type == "rtf":
-#         text = rtf_to_text(response.content.decode())
-#         return text, None  # No page numbers for RTF
 
-#     elif file_type == "txt":
-#         text = response.text
-#         return text, None  # No page numbers for TXT
+@app.post("/v1/split-pdf-paged")
+async def process_pdf(request_data: InputModel):
+    try:
+        # Extract data from the request
+        file_url = request_data.url
+        chunk_size = request_data.chunks.chunk_size
+        chunk_overlap = request_data.chunks.chunk_overlap
+        model = request_data.model
 
-#     else:
-#         raise HTTPException(status_code=400, detail="Unsupported file type")
+        # Fetch the PDF file from the URL
+        response = requests.get(file_url)
+        if response.status_code != 200:
+            raise HTTPException(status_code=404, detail="File not found")
 
-# def get_page_number(start_index, page_numbers):
-#     if page_numbers is None:
-#         return None
-#     word_count = 0
-#     for i, page_number in enumerate(page_numbers):
-#         word_count += 1
-#         if word_count > start_index:
-#             return page_number
-#     return None
+        # Read the PDF file
+        pdf_file = BytesIO(response.content)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        
+        documents = []
+        cumulative_length = 0
+        for page_number, page in enumerate(pdf_reader.pages):
+            text = page.extract_text()
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                length_function=len,
+                add_start_index=True,
+            )
+            page_documents = text_splitter.create_documents([text])
+            for doc in page_documents:
+                doc.metadata['page_number'] = page_number + 1
+                doc.metadata['start_index'] += cumulative_length
+            cumulative_length += len(text)
+            documents.extend(page_documents)
+
+        # Create chunks list
+        if model is not None:
+            chunks = [
+                {
+                    "chunk": doc.page_content,
+                    "start_index": doc.metadata['start_index'],
+                    "page_number": doc.metadata['page_number'],
+                    "vector": create_embeddings(doc.page_content, model),
+                }
+                for doc in documents
+            ]
+        else:
+            chunks = [
+                {
+                    "chunk": doc.page_content,
+                    "start_index": doc.metadata['start_index'],
+                    "page_number": doc.metadata['page_number'],
+                }
+                for doc in documents
+            ]
+
+        return JSONResponse(content={"chunks": chunks}, status_code=200)
+    except Exception as e:
+        logging.error(f"Error processing PDF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post('/v1/embeddings')
 async def get_embeddings(request: Request):
