@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile, Query, Depends, status, Form, Request
+from fastapi import FastAPI, HTTPException, Body, Response, File, UploadFile, Query, Depends, status, Form, Request, Header
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -73,6 +73,8 @@ psqlpass = urllib.parse.quote_plus(psqlpass)
 
 TOKEN = os.getenv("TOKEN")
 
+API_KEY = os.getenv("API_KEY")
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 async def verify_token(token: str = Depends(oauth2_scheme)):
@@ -83,6 +85,14 @@ async def verify_token(token: str = Depends(oauth2_scheme)):
             headers={"WWW-Authenticate": "Bearer"},
         )
     return token
+
+
+async def verify_api_key(x_api_key: str = Header(...)):
+    if x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key",
+        )
 
 class FolderName(BaseModel):
     folder_name: str
@@ -424,7 +434,7 @@ def safety_check(python_code: str) -> dict[str, object]:
     return result
 
 @app.post("/execute-notebook")
-async def execute(notebook_name: str = Body(...), safety_check_flag: bool = Body(False), token: str = Depends(verify_token)):
+async def execute(notebook_name: str = Body(...), safety_check_flag: bool = Body(False), api_key: str = Depends(verify_api_key)):
     try:
         folder_path = f"{workspace_path}"
         notebook_path = f"{folder_path}/{notebook_name}"
@@ -452,7 +462,7 @@ from sqlalchemy import create_engine
 
 
 @app.get("/read-pgsql")
-async def read_pgsql(table_name: str = Query(...), token: str = Depends(oauth2_scheme)):
+async def read_pgsql(table_name: str = Query(...), token: str = Depends(oauth2_scheme), api_key: str = Depends(verify_api_key)):
     try:
         encoded_psqlpass = quote_plus(psqlpass)
         engine = create_engine(f'postgresql://{id}:{encoded_psqlpass}@aws-0-us-west-1.pooler.supabase.com:5432/postgres')
@@ -476,7 +486,7 @@ async def get_table_names(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/update-pkl")
-async def read_pgsql(table_name: str = Query(...),psqlpass: str = Body(...),file_name: str = Body(...), sql: str = Body(...), token: str = Depends(oauth2_scheme)):
+async def read_pgsql(table_name: str = Query(...),psqlpass: str = Body(...),file_name: str = Body(...), sql: str = Body(...), token: str = Depends(oauth2_scheme), api_key: str = Depends(verify_api_key)):
     try:
         encoded_psqlpass = quote_plus(psqlpass)
         engine = create_engine(f'postgresql://{id}:{encoded_psqlpass}@aws-0-us-west-1.pooler.supabase.com:5432/postgres')
@@ -493,7 +503,7 @@ async def read_pgsql(table_name: str = Query(...),psqlpass: str = Body(...),file
 
 
 @app.post("/write-pkl-supabase")
-async def write_pkl_supabase(id: str = Body(...), psqlpass: str = Body(...),file_name: str = Body(...), sql: str = Body(...), token: str = Depends(verify_token)):
+async def write_pkl_supabase(id: str = Body(...), psqlpass: str = Body(...),file_name: str = Body(...), sql: str = Body(...), api_key: str = Depends(verify_api_key)):
     try:
         encoded_psqlpass = quote_plus(psqlpass)
         engine = create_engine(f'postgresql://{id}:{encoded_psqlpass}@aws-0-us-west-1.pooler.supabase.com:5432/postgres')
@@ -513,7 +523,7 @@ async def write_pkl_supabase(id: str = Body(...), psqlpass: str = Body(...),file
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/update-pkl-from-file")
-async def update_pkl_from_file(file: UploadFile = File(...), file_name: str = Body(...), token: str = Depends(verify_token)):
+async def update_pkl_from_file(file: UploadFile = File(...), file_name: str = Body(...), api_key: str = Depends(verify_api_key)):
     try:
         # Determine the file type
         file_type = file.filename.split('.')[-1]
@@ -558,7 +568,7 @@ async def read_pgsql(file_name: str = Query(...), token: str = Depends(oauth2_sc
 ### Not ready for use yet.  Write to supabase is out of scope currently.
 
 @app.get("/modify-pgsql-pkl")
-async def modify_pgsql(token: str = Depends(oauth2_scheme)):
+async def modify_pgsql(token: str = Depends(oauth2_scheme), api_key: str = Depends(verify_api_key)):
     try:
         # Load the DataFrame from the pickle file
         df = pd.read_pickle('cache.pkl')
@@ -575,7 +585,7 @@ async def modify_pgsql(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/execute-notebook-pgsql")
-async def execute(input: ExecuteNotebook, id: str = Body(...), psqlpass: str = Body(...), token: str = Depends(verify_token)):
+async def execute(input: ExecuteNotebook, id: str = Body(...), psqlpass: str = Body(...), api_key: str = Depends(verify_api_key)):
     try:
         folder_path = f"{workspace_path}/{input.folder_name}"
         notebook_path = f"{folder_path}/{input.file_name}"
@@ -617,7 +627,7 @@ async def update_supabase(table_name: str = Body(...), token: str = Depends(oaut
 
 
 @app.post("/new-notebook")
-async def notebook_environment(notebook: dict = Body(...), file_name: str = Body(...), safety_check_flag: bool = Body(False), token: str = Depends(verify_token)):
+async def notebook_environment(notebook: dict = Body(...), file_name: str = Body(...), safety_check_flag: bool = Body(False), api_key: str = Depends(verify_api_key)):
     # Transform the request body
     cells = [{"cell_type": "code", "source": cell.split('\n')} for cell in notebook['cells']]
     notebook_data = {
@@ -682,7 +692,7 @@ async def notebook_environment(notebook: dict = Body(...), file_name: str = Body
 
 
 @app.post("/delete-file")
-async def delete_file(input: DeleteFileInput, token: str = Depends(verify_token)):
+async def delete_file(input: DeleteFileInput, api_key: str = Depends(verify_api_key)):
     file_path = f"{workspace_path}/{input.file_name}"
     print(file_path)
     if os.path.isfile(file_path):
@@ -695,7 +705,7 @@ async def delete_file(input: DeleteFileInput, token: str = Depends(verify_token)
         return {"status": "error", "message": "File does not exist"}
 
 @app.post("/upload-file")
-async def upload_file(file_name: UploadFile = File(...), folder_path: str = Form(...), token: str = Depends(verify_token)):
+async def upload_file(file_name: UploadFile = File(...), folder_path: str = Form(...), api_key: str = Depends(verify_api_key)):
     full_folder_path = f"{workspace_path}/{folder_path}"
     if not os.path.isdir(full_folder_path):
         os.makedirs(full_folder_path, exist_ok=True)
@@ -707,7 +717,7 @@ async def upload_file(file_name: UploadFile = File(...), folder_path: str = Form
 
 #Uploads file to fs from any URL
 @app.post("/upload-url")
-async def download_file(input: DownloadFileInput, token: str = Depends(verify_token)):
+async def download_file(input: DownloadFileInput, api_key: str = Depends(verify_api_key)):
     folder_name = f"{workspace_path}/{input.folder_name}"
     if not os.path.isdir(folder_name):
         os.makedirs(folder_name, exist_ok=True)
@@ -724,7 +734,7 @@ async def download_file(input: DownloadFileInput, token: str = Depends(verify_to
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/delete-folder")
-async def delete_folder(folder_name: FolderName, token: str = Depends(verify_token)):
+async def delete_folder(folder_name: FolderName, api_key: str = Depends(verify_api_key)):
     folder_path = f"/home/ubuntu/automatenb/environment/{folder_name.folder_name}"
     if os.path.isdir(folder_path):
         try:
@@ -736,7 +746,7 @@ async def delete_folder(folder_name: FolderName, token: str = Depends(verify_tok
         return {"status": "error", "message": "Folder does not exist"}
 
 @app.post("/add-cell")
-async def add_cell(file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body("code"), safety_check_flag: bool = Body(False), token: str = Depends(verify_token)):
+async def add_cell(file_name: str = Body(...), cell_content: str = Body(...), cell_type: str = Body("code"), safety_check_flag: bool = Body(False), api_key: str = Depends(verify_api_key)):
     try:
         # Check if the code is safe to execute
         if safety_check_flag:
@@ -768,7 +778,7 @@ async def add_cell(file_name: str = Body(...), cell_content: str = Body(...), ce
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/update-cell")
-async def update_cell(input: UpdateCellInput, safety_check_flag: bool = Body(False), token: str = Depends(verify_token)):
+async def update_cell(input: UpdateCellInput, safety_check_flag: bool = Body(False)):
     try:
         # Check if the code is safe to execute
         if safety_check_flag:
@@ -801,7 +811,7 @@ async def update_cell(input: UpdateCellInput, safety_check_flag: bool = Body(Fal
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/delete-cell")
-async def delete_cell(input: DeleteCellInput, token: str = Depends(verify_token)):
+async def delete_cell(input: DeleteCellInput, api_key: str = Depends(verify_api_key)):
     try:
         notebook_path = f"{workspace_path}/{input.file_name}"
         with open(notebook_path) as f:
@@ -823,7 +833,7 @@ async def delete_cell(input: DeleteCellInput, token: str = Depends(verify_token)
 from fastapi import Form
 
 @app.post("/download-file")
-async def download_file(token: str = Depends(verify_token), file_name: str = Form(...)):
+async def download_file(api_key: str = Depends(verify_api_key), file_name: str = Form(...)):
     file_path = f"{workspace_path}/{file_name}"
     if os.path.isfile(file_path):
         return FileResponse(file_path, filename=file_name)
@@ -833,7 +843,7 @@ async def download_file(token: str = Depends(verify_token), file_name: str = For
 
 #uploads file to supabase and returns SignedURL  
 @app.post("/download-url")
-async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
+async def upload_file(input: ULFileData, api_key: str = Depends(verify_api_key)):
     folder_path = f"{workspace_path}/{input.folder_name}"
     if not os.path.isdir(folder_path):
         raise HTTPException(status_code=400, detail="Folder does not exist")
@@ -862,7 +872,7 @@ async def upload_file(input: ULFileData, token: str = Depends(verify_token)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post('/v1/tokens')
-async def count_tokens(request: Request):
+async def count_tokens(request: Request, api_key: str = Depends(verify_api_key)):
     data = await request.json()
     if 'key' not in data:
         raise HTTPException(status_code=404, detail="Key not found")
@@ -909,7 +919,7 @@ def parse_youtube_transcript(url):
 
 
 @app.post("/v1/split-text")
-async def process_text(request_data: InputModel):
+async def process_text(request_data: InputModel, api_key: str = Depends(verify_api_key)):
     chunk_size = request_data.chunks.chunk_size
     chunk_overlap = request_data.chunks.chunk_overlap
     return_full_text = request_data.return_full_text
@@ -1089,7 +1099,7 @@ async def process_pdf(request_data: InputModel):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post('/v1/embeddings')
-async def get_embeddings(request: Request):
+async def get_embeddings(request: Request, api_key: str = Depends(verify_api_key)):
     data = await request.json()
     model_name = data['model']
     input_texts = data['input']
@@ -1120,7 +1130,7 @@ async def get_embeddings(request: Request):
     }
 
 @app.post("/transcribe")
-async def transcribe(input: TranscribeInput, token: str = Depends(verify_token)):
+async def transcribe(input: TranscribeInput, api_key: str = Depends(verify_api_key)):
     try:
         current_date = datetime.now().strftime("%d%m%Y")
         short_id = str(uuid.uuid4())[:8]
@@ -1171,7 +1181,7 @@ class ResultInput(BaseModel):
     status: str
 
 @app.post("/transcriberesults")
-async def receive_results(input: ResultInput, token: str = Depends(verify_token)):
+async def receive_results(input: ResultInput, api_key: str = Depends(verify_api_key)):
     logging.info(f"Request payload: {input}")
     if input.status not in ["COMPLETED", "FAILED"]:
         raise HTTPException(status_code=400, detail="Invalid status. Must be 'Completed' or 'Failed'.")
