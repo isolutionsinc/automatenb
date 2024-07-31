@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from nbformat import from_dict, write, read
 from nbformat.v4 import new_code_cell, new_markdown_cell
 from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
-from nbconvert import PythonExporter, NotebookExporter
+#from nbconvert import PythonExporter, NotebookExporter
 
 from traceback import format_exception
 
@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import traceback
 import logging
-import sys
+#import sys
 import requests
 import re
 
@@ -29,11 +29,11 @@ import boto3
 load_dotenv()
 
 from supabase import create_client, Client
-from starlette.responses import StreamingResponse
-import aiohttp
-import aiofiles
+#from starlette.responses import StreamingResponse
+#import aiohttp
+#import aiofiles
 from fastapi import HTTPException
-from starlette.status import HTTP_400_BAD_REQUEST
+#from starlette.status import HTTP_400_BAD_REQUEST
 
 from pydantic import BaseModel
 from typing import Any 
@@ -54,8 +54,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel
 from typing import Optional
-from urllib.parse import urlparse
-from urllib.parse import unquote
+#from urllib.parse import urlparse
+#from urllib.parse import unquote
 import PyPDF2
 
 import uuid
@@ -68,8 +68,8 @@ import ast
 from  RestrictedPython import compile_restricted
 
 psqlpass = os.getenv("PSQLPASS")
-psqlpass = urllib.parse.quote_plus(psqlpass)
-
+#psqlpass = urllib.parse.quote_plus(psqlpass)
+psqlpass = urllib.parse.quote_plus(str(psqlpass))
 
 TOKEN = os.getenv("TOKEN")
 
@@ -1134,17 +1134,6 @@ async def transcribe(input: TranscribeInput, api_key: str = Depends(verify_api_k
     try:
         current_date = datetime.now().strftime("%d%m%Y")
         short_id = str(uuid.uuid4())[:8]
-        # output_filename = short_id + "_" + current_date
-        # s3_location = f"s3://townhallmeeting/{s3_file}.{type_file}"
-        # result = subprocess.run(
-        #     ["python3", "/home/ubuntu/transcribe/transcribe.py", output_filename, s3_location, type_file], 
-        #     capture_output=True, 
-        #     text=True, 
-        #     check=True,
-        #     timeout=300
-        # )
-
-        # return {"status": "Processing", "output_filename": output_filename }
         job_name = short_id + "_" + current_date
         input_path = input.input_path
         output_path = input.output_path
@@ -1154,27 +1143,49 @@ async def transcribe(input: TranscribeInput, api_key: str = Depends(verify_api_k
         
         s3_location = f"s3://townhallmeeting/{input_path}"
         
-        try:
-            subprocess.run(
-                ["python3", "/home/ubuntu/transcribe/transcribe.py", job_name, s3_location, file_type, output_path], 
-                capture_output=True, 
-                text=True, 
-                check=True,
-                timeout=300
-            )
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": e.stderr}
-
-        return {"status": "Processing", "job_name": job_name}
-    except subprocess.TimeoutExpired:
-        logging.error("Transcription process timed out")
-        return {"status": "error", "message": "Transcription process timed out"}
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Error in transcription process: {e.stderr}")
-        return {"status": "error", "output": e.output, "error": e.stderr}
+        response = start_transcription(job_name, s3_location, file_type, output_path)
+        
+        if "TranscriptionJobStatus" in response and response["TranscriptionJobStatus"] == "IN_PROGRESS":
+            return {"status": "Processing", "job_name": job_name}
+        else:
+            return {"status": "error", "message": response}
     except Exception as e:
         logging.error(f"Unexpected error: {str(e)}")
         return {"status": "error", "message": str(e)}
+    
+def start_transcription(job_name, media_uri, type_file, output_path):
+    base_filename = os.path.basename(media_uri)
+    filename = job_name + base_filename
+
+    filetype = type_file
+
+    try: 
+        client = boto3.client('transcribe', region_name='us-gov-east-1')  # Specify your region here
+
+        response = client.start_transcription_job(
+            TranscriptionJobName=str(job_name),
+            LanguageCode='en-US',
+            MediaFormat=filetype,
+            Media={
+                'MediaFileUri': media_uri,
+            },
+            OutputBucketName='townhallmeeting',
+            OutputKey=f'{output_path}/{filename}.json',
+            Subtitles={
+                'Formats': [
+                    'srt',
+                ],
+                'OutputStartIndex': 1
+            }
+        )
+        logging.info(f'{filename} Processing')
+        return {
+            "TranscriptionJobName": response['TranscriptionJob']['TranscriptionJobName'],
+            "TranscriptionJobStatus": response['TranscriptionJob']['TranscriptionJobStatus']
+        }
+    except Exception as e:
+        logging.error(f"Error starting transcription: {e}")
+        return str(e)
 
 class ResultInput(BaseModel):
     file_name: str
@@ -1191,7 +1202,7 @@ async def receive_results(input: ResultInput, api_key: str = Depends(verify_api_
     logging.info(input)
     return {"status": "success", "message": f"Result for file {input.file_name} received with status {input.status}"}
 
-client = boto3.client('transcribe')
+client = boto3.client('transcribe', region_name='us-gov-east-1')
 
 @app.get("/transcription-status")
 async def transcription_status(job_name: str = Query(...)):
