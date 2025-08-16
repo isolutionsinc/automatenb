@@ -24,6 +24,8 @@ import re
 
 import boto3
 
+import pickle
+
 #import pdfplumber
 
 load_dotenv()
@@ -522,6 +524,131 @@ async def write_pkl_supabase(id: str = Body(...), psqlpass: str = Body(...),file
         logging.error(f"Error writing to pickle file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+import numpy as np
+from sqlalchemy import inspect
+import pytz
+
+def map_sqlalchemy_types_to_python(column_types):
+    """
+    Maps SQLAlchemy type names to Python types suitable for pandas DataFrames.
+    
+    Args:
+    column_types (dict): A dictionary mapping column names to SQLAlchemy type names.
+    
+    Returns:
+    dict: A dictionary mapping column names to Python types.
+    """
+    type_mapping = {
+        "Integer": np.int64,
+        "INTEGER": np.int32,  # Equivalent to int4 in PostgreSQL
+        "BIGINT": np.int64,   # Equivalent to int8 in PostgreSQL
+        "String": str,
+        "Text": str,          # Text type in PostgreSQL
+        "Float": np.float64,
+        "Numeric": float,     # Numeric can be safely mapped to float for most use cases
+        "Date": 'datetime64[ns]',
+        "DateTime": 'datetime64[ns]',
+        "Boolean": bool,
+        "UUID": str,          # UUIDs are best represented as strings
+        "TIMESTAMP": 'datetime64[ns]',
+        "JSONB": str,          # JSONB can be represented as strings or objects
+        "BOOLEAN": bool,
+        "TEXT": str,  
+        # Add more mappings as needed
+    }
+    
+    python_types = {}
+    for column, sql_type in column_types.items():
+        # Get the name of the SQL type
+        sql_type_name = sql_type.__class__.__name__
+        # Find the closest Python type, default to str if not found
+        python_type = type_mapping.get(sql_type_name, str)
+        python_types[column] = python_type
+    
+    return python_types
+
+@app.post("/write-pkl-supabase-datatypes")
+async def write_pkl_supabase(id: str = Body(...), psqlpass: str = Body(...), file_name: str = Body(...), sql: str = Body(...), api_key: str = Depends(verify_api_key)):
+    try:
+        encoded_psqlpass = quote_plus(psqlpass)
+        engine = create_engine(f'postgresql://{id}:{encoded_psqlpass}@aws-0-us-west-1.pooler.supabase.com:5432/postgres')
+
+        # Execute SQL query to get the data
+        df = pd.read_sql_query(sql, engine)
+        
+        # Get the table name from the SQL query for schema inspection
+        table_name = sql.split("FROM")[1].strip().split()[0]  # Simplistic way to extract table name, might need improvement
+        
+        # Inspect the schema of the table
+        inspector = inspect(engine)
+        columns_info = inspector.get_columns(table_name)
+        
+        # Log the column information
+        logging.info(f"Columns info: {columns_info}")
+        
+        # Create a dictionary to map column names to their SQL data types
+        column_types = {col['name']: col['type'] for col in columns_info}
+        
+        # Log the column types
+        logging.info(f"Column types: {column_types}")
+        
+        # Map SQLAlchemy types to Python types
+        python_types = map_sqlalchemy_types_to_python(column_types)
+        
+        # Log the Python types
+        logging.info(f"Python types: {python_types}")
+        
+        # Convert DataFrame columns to the corresponding Python data types
+        for column in df.columns:
+            if column in python_types:
+                if python_types[column] == 'datetime64[ns]':
+                    # Handle timezone-naive timestamps
+                    if df[column].dt.tz is None:
+                        df[column] = df[column].dt.tz_localize('UTC')
+                    else:
+                        # Handle timezone-aware timestamps
+                        df[column] = df[column].dt.tz_convert('UTC')
+                elif python_types[column] == bool:
+                    # Handle boolean types
+                    df[column] = df[column].astype('bool')
+                elif python_types[column] == 'object' and column_types[column].__class__.__name__ == 'JSONB':
+                    # Handle JSONB types
+                    df[column] = df[column].apply(json.loads)
+                else:
+                    df[column] = df[column].astype(python_types[column])
+                # Log the conversion
+                logging.info(f"Converted column {column} to {python_types[column]}")
+
+        # Convert any remaining 'object' type columns to 'str'
+        for column in df.columns:
+            if df[column].dtype == 'object':
+                df[column] = df[column].astype(str)
+                logging.info(f"Converted column {column} to str")
+
+        # Save DataFrame and data types to a pickle file
+        data = {
+            'dataframe': df,
+            'dtypes': {col: 'str' if df[col].dtype == 'object' else dtype for col, dtype in df.dtypes.apply(lambda x: x.name).to_dict().items()}
+        }
+
+        # Log the data types
+        logging.info(f"Data types: {data['dtypes']}")
+
+        # Create the directory if it does not exist
+        directory = os.path.dirname(f'{workspace_path}/{file_name}')
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        with open(f'{workspace_path}/{file_name}', 'wb') as f:
+            pickle.dump(data, f)
+
+        return {"status": 200, "message": "file created", "filename": file_name}
+    except Exception as e:
+        logging.error(f"Error writing to pickle file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/update-pkl-from-file")
 async def update_pkl_from_file(file: UploadFile = File(...), file_name: str = Body(...), api_key: str = Depends(verify_api_key)):
     try:
@@ -550,11 +677,38 @@ async def update_pkl_from_file(file: UploadFile = File(...), file_name: str = Bo
         logging.error(f"Error updating pickle file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# @app.get("/read-pkl")
+# async def read_pgsql(file_name: str = Query(...), token: str = Depends(oauth2_scheme)):
+#     try:
+#         # Load the DataFrame from the pickle file
+#         df = pd.read_pickle(f'{workspace_path}/{file_name}')
+
+#         # Convert the DataFrame to a dictionary
+#         data = df.to_dict(orient='records')
+
+#         return {"status": "success", "data": data}
+#     except Exception as e:
+#         logging.error(f"Error reading from pickle file: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/read-pkl")
 async def read_pgsql(file_name: str = Query(...), token: str = Depends(oauth2_scheme)):
     try:
-        # Load the DataFrame from the pickle file
-        df = pd.read_pickle(f'{workspace_path}/{file_name}')
+        # Load the DataFrame and data types from the pickle file
+        with open(f'{workspace_path}/{file_name}', 'rb') as f:
+            data = pickle.load(f)
+        
+        # Check if 'dtypes' exists in the loaded data
+        if 'dtypes' in data:
+            df = data['dataframe']
+            dtypes = data['dtypes']
+            
+            # Apply the data types to the DataFrame
+            for column, dtype in dtypes.items():
+                df[column] = df[column].astype(dtype)
+        else:
+            # If 'dtypes' does not exist, assume 'data' is the DataFrame
+            df = data
 
         # Convert the DataFrame to a dictionary
         data = df.to_dict(orient='records')
@@ -563,8 +717,6 @@ async def read_pgsql(file_name: str = Query(...), token: str = Depends(oauth2_sc
     except Exception as e:
         logging.error(f"Error reading from pickle file: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
 ### Not ready for use yet.  Write to supabase is out of scope currently.
 
 @app.get("/modify-pgsql-pkl")
@@ -841,7 +993,7 @@ async def download_file(api_key: str = Depends(verify_api_key), file_name: str =
         raise HTTPException(status_code=404, detail="File not found")
 
 
-#uploads file to supabase and returns SignedURL  
+# uploads file to supabase and returns SignedURL  
 @app.post("/download-url")
 async def upload_file(input: ULFileData, api_key: str = Depends(verify_api_key)):
     folder_path = f"{workspace_path}/{input.folder_name}"
@@ -868,6 +1020,45 @@ async def upload_file(input: ULFileData, api_key: str = Depends(verify_api_key))
 
         #return {"status": "success", "message": f"File {input.file_name} has been uploaded to {input.bucket_name}", "file_url": file_url, "signed_url": res}
         return {"status": "success", "message": f"File {input.file_name} has been uploaded to {input.bucket_name}", "signed_url": res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+from moviepy.editor import VideoFileClip
+
+
+
+@app.post("/upload-video-extract-audio")
+async def upload_video_extract_audio(file: UploadFile = File(...), folder_name: str = Form(...), bucket_name: str = Form(...), api_key: str = Depends(verify_api_key)):
+    folder_path = f"{workspace_path}/{folder_name}"
+    if not os.path.isdir(folder_path):
+        os.makedirs(folder_path, exist_ok=True)
+
+    s3_client = boto3.client('s3')
+    
+    file_path = f"{folder_path}/{file.filename}"
+    audio_filename = f"{file.filename.rsplit('.', 1)[0]}.mp3"
+    audio_path = f"{folder_path}/{audio_filename}"
+
+    try:
+        # Save the uploaded video file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Extract audio from video
+        video = VideoFileClip(file_path)
+        video.audio.write_audiofile(audio_path)
+        video.close()
+
+        # Delete the original video file
+        os.remove(file_path)
+
+        # Upload the audio file to S3
+        s3_client.upload_file(audio_path, bucket_name, f"{folder_name}/{audio_filename}")
+
+        # Delete the audio file after upload
+        os.remove(audio_path)
+
+        return {"status": "success", "message": "Audio extracted and uploaded to S3", "filename": audio_filename, "folder": folder_name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1142,11 +1333,15 @@ async def transcribe(input: TranscribeInput, api_key: str = Depends(verify_api_k
         file_type = input_path.split('.')[-1]
         
         s3_location = f"s3://townhallmeeting/{input_path}"
+        #s3_location = f"s3://transcripts/{input_path}"
+
+        # Get the base filename from the input path
+        base_filename = os.path.basename(input_path)
         
         response = start_transcription(job_name, s3_location, file_type, output_path)
         
         if "TranscriptionJobStatus" in response and response["TranscriptionJobStatus"] == "IN_PROGRESS":
-            return {"status": "Processing", "job_name": job_name}
+            return {"status": "Processing", "job_name": job_name, "json_file": f"{base_filename}.json", "srt_file": f"{base_filename}.srt"}
         else:
             return {"status": "error", "message": response}
     except Exception as e:
@@ -1155,12 +1350,13 @@ async def transcribe(input: TranscribeInput, api_key: str = Depends(verify_api_k
     
 def start_transcription(job_name, media_uri, type_file, output_path):
     base_filename = os.path.basename(media_uri)
-    filename = job_name + base_filename
+    #filename = job_name + base_filename
 
     filetype = type_file
 
     try: 
         client = boto3.client('transcribe', region_name='us-gov-east-1')  # Specify your region here
+        #client = boto3.client('transcribe', region_name='us-west-1') 
 
         response = client.start_transcription_job(
             TranscriptionJobName=str(job_name),
@@ -1170,7 +1366,9 @@ def start_transcription(job_name, media_uri, type_file, output_path):
                 'MediaFileUri': media_uri,
             },
             OutputBucketName='townhallmeeting',
-            OutputKey=f'{output_path}/{filename}.json',
+            #OutputBucketName='transcript',
+            #OutputKey=f'{output_path}/{filename}.json',
+            OutputKey=f'{output_path}/{base_filename}.json',
             Subtitles={
                 'Formats': [
                     'srt',
@@ -1178,7 +1376,7 @@ def start_transcription(job_name, media_uri, type_file, output_path):
                 'OutputStartIndex': 1
             }
         )
-        logging.info(f'{filename} Processing')
+        logging.info(f'{base_filename} Processing')
         return {
             "TranscriptionJobName": response['TranscriptionJob']['TranscriptionJobName'],
             "TranscriptionJobStatus": response['TranscriptionJob']['TranscriptionJobStatus']
@@ -1200,13 +1398,18 @@ async def receive_results(input: ResultInput, api_key: str = Depends(verify_api_
     # Process the result here (e.g., log it, update a database, etc.)
     logging.info(f"Received result for file {input.file_name}: {input.status}")
     logging.info(input)
+
     return {"status": "success", "message": f"Result for file {input.file_name} received with status {input.status}"}
 
 client = boto3.client('transcribe', region_name='us-gov-east-1')
+#client = boto3.client('transcribe', region_name='us-west-1')
 
 @app.get("/transcription-status")
 async def transcription_status(job_name: str = Query(...)):
     try:
+        print("AWS_ACCESS_KEY_ID:", os.getenv("AWS_ACCESS_KEY_ID"))
+        print("AWS_SECRET_ACCESS_KEY:", os.getenv("AWS_SECRET_ACCESS_KEY"))
+        print("AWS_SESSION_TOKEN:", os.getenv("AWS_SESSION_TOKEN"))
         response = client.get_transcription_job(
             TranscriptionJobName=job_name
         )

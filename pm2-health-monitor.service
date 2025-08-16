@@ -1,0 +1,30 @@
+[Unit]
+Description=PM2 Health Monitor for CodeBox Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/automatenb
+ExecStart=/home/ubuntu/automatenb/monitor_health.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pm2-health-monitor
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/var/log /home/ubuntu/automatenb /home/ubuntu/.pm2
+
+# Environment
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/home/ubuntu
+
+[Install]
+WantedBy=multi-user.target
